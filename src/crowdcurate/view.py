@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import shlex
+import subprocess
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, simpledialog, ttk
 from typing import TYPE_CHECKING, Any, Callable
 
 from PIL import Image, ImageTk
 
-from .metadata import MetadataWindow
+from .metadata import ExifEditorWindow, MetadataWindow
 from .model import SlideItem
 
 if TYPE_CHECKING:
@@ -59,6 +61,8 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             self.image_frame, anchor="center", text="Loading..."
         )
         self.image_label.pack(expand=True, fill="both")
+        # Right-click (Button-3) on the image to show Open With menu
+        self.image_label.bind("<Button-3>", self._on_image_right_click)
 
         self.buttons = {
             "previous": ttk.Button(
@@ -86,6 +90,13 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.bind("<space>", lambda event: self._on_play_pause())
         self.root.bind("<Escape>", lambda event: self.root.quit())
         self.root.bind("<i>", lambda event: self._on_info())
+        # Refresh current image after external edit with 'r'
+        self.root.bind("r", lambda event: self._on_refresh())
+        # Edit EXIF/IPTC metadata with 'x'
+        self.root.bind("x", lambda event: self._on_edit_exif())
+        # Show help with '?' or F1
+        self.root.bind("?", lambda event: self._on_help())
+        self.root.bind("<F1>", lambda event: self._on_help())
         # Re-render the current image after window resizing (debounced)
         self.root.bind("<Configure>", self._on_configure)
         # Toggle upscaling on/off with 'u'
@@ -192,16 +203,16 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             resized_image = self._resize_image(self._current_image_original)
             self._current_photo = ImageTk.PhotoImage(resized_image)
             self.image_label.config(image=self._current_photo, text="")
-        except Exception:
+        except (OSError, tk.TclError):
             # If anything goes wrong re-show placeholder to avoid crashing UI
             self.show_placeholder("Image not found")
 
-    def _on_configure(self, event: object) -> None:
+    def _on_configure(self, _event: object) -> None:
         # Debounce configure events so we don't thrash image resizing
         if self._resize_after_id is not None:
             try:
                 self.root.after_cancel(self._resize_after_id)
-            except Exception:
+            except tk.TclError:
                 pass
         self._resize_after_id = self.root.after(100, self._on_configure_idle)
 
@@ -243,3 +254,100 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             before_widget=self.main_area,
         )
         self.root.after_idle(self._refresh_current_image)
+
+    def _on_refresh(self) -> None:
+        """Reload the current image from disk (use after editing externally)."""
+        if self._controller is not None:
+            try:
+                self._controller.refresh_current()
+                self.root.after_idle(self._refresh_current_image)
+            except (OSError, RuntimeError):
+                # If controller-refresh is unavailable or fails, attempt local refresh
+                self.root.after_idle(self._refresh_current_image)
+
+    def _on_help(self) -> None:
+        """Show a simple help popup listing available keystrokes."""
+        help_text = (
+            "Keys:\n"
+            "  Left / Right: Previous / Next slide\n"
+            "  Space: Play / Pause\n"
+            "  i: Toggle info sidebar\n"
+            "  u: Toggle upscaling\n"
+            "  r: Refresh current image (after external edit)\n"
+            "  x: View/edit EXIF/IPTC data\n"
+            "  ?: Show this help (also F1)\n"
+            "  Ctrl+Shift +/-: Change metadata font size\n"
+            "  Right-click image: Open with...\n"
+        )
+        messagebox.showinfo("Help - Keystrokes", help_text, parent=self.root)
+
+    def _on_edit_exif(self) -> None:
+        """Open the EXIF/IPTC editor for the current image."""
+        if self._current_slide is None:
+            messagebox.showinfo(
+                "EXIF Editor", "No image loaded.", parent=self.root
+            )
+            return
+        ExifEditorWindow(self.root, self._current_slide.source)
+
+    def _on_image_right_click(self, event: Any) -> None:
+        """Show a popup menu with 'Open with' choices for the current image."""
+        if self._current_slide is None:
+            return
+
+        menu = tk.Menu(self.root, tearoff=0)
+        menu.add_command(
+            label="Open with GIMP",
+            command=lambda: self._open_with_cmd("gimp"),
+        )
+        menu.add_command(
+            label="Open with System Default",
+            command=lambda: self._open_with_cmd("xdg-open"),
+        )
+        menu.add_separator()
+        menu.add_command(label="Choose command...", command=self._open_with_custom)
+
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()  # pylint: disable=consider-using-with
+
+    def _open_with_custom(self) -> None:
+        if self._current_slide is None:
+            return
+        prompt = (
+            "Enter command to run. Use {file} where you want the filename to appear, "
+            "or leave it out to append the filename."
+        )
+        cmd = simpledialog.askstring("Open with...", prompt, parent=self.root)
+        if not cmd:
+            return
+        self._open_with_cmd(cmd)
+
+    def _open_with_cmd(self, cmd: str) -> None:
+        if self._current_slide is None:
+            return
+        path = str(self._current_slide.source)
+        # If user provided a placeholder {file}, substitute it
+        if "{file}" in cmd:
+            cmd_filled = cmd.replace("{file}", path)
+            args = shlex.split(cmd_filled)
+        else:
+            args = shlex.split(cmd) + [path]
+
+        try:
+            with subprocess.Popen(args, shell=False):  # noqa: S603
+                pass
+        except FileNotFoundError:
+            messagebox.showerror(
+                "Command not found",
+                f"Could not run: {args[0]}",
+                parent=self.root,
+            )
+        except (OSError, ValueError) as exc:
+            # pragma: no cover - runtime error reporting
+            messagebox.showerror(
+                "Error launching",
+                str(exc),
+                parent=self.root,
+            )

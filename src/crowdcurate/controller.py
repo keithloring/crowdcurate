@@ -120,3 +120,23 @@ class SlideshowController:
             except (IndexError, OSError):
                 pass
         self._preload_id = None
+
+    def refresh_current(self) -> None:
+        """Force-reload the current slide image from disk and update the view.
+
+        Useful after the file has been edited externally.
+        """
+        slide = self.deck.get_current()
+        if slide is None:
+            return
+        try:
+            # Always reload from disk to pick up external edits
+            image = self.cache.load(slide)
+            self.cache.set(self.deck.current_index, image)
+            self.view.display_slide(slide, image)
+            self.view.update_status(self.deck.current_status())
+            # Preload neighbors again in case content changed
+            self._schedule_preload()
+        except (OSError, ValueError):
+            # If reload fails, show placeholder and keep running
+            self.view.show_placeholder("Image not found")
