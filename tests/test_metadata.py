@@ -202,6 +202,21 @@ class TestExifEditorWindow:
         finally:
             root.destroy()
 
+    def test_convert_exif_value_undefined_bytes(self) -> None:
+        """Test conversion of UNDEFINED/BYTE EXIF values."""
+        root = tk.Tk()
+        try:
+            editor = ExifEditorWindow.__new__(ExifEditorWindow)
+            editor.tag_types = {
+                ("Exif", 36864): 7,  # UNDEFINED type (ExifVersion)
+            }
+
+            result = editor._convert_exif_value("Exif", 36864, "0230")
+            assert isinstance(result, bytes)
+            assert result == b"0230"
+        finally:
+            root.destroy()
+
     def test_parse_exif_text_basic(self, sample_image_with_exif: Path) -> None:
         """Test parsing of edited EXIF text."""
         root = tk.Tk()
@@ -219,6 +234,25 @@ Model=NewModel
             result = editor._parse_exif_text(edit_text)
             assert "0th" in result
             assert "Exif" in result
+        finally:
+            root.destroy()
+
+    def test_save_metadata_ignores_xmp_placeholder(self, tmp_path: Path) -> None:
+        """Saving EXIF-only edits should not try to parse the XMP placeholder as XML."""
+        img_path = tmp_path / "placeholder.jpg"
+        Image.new("RGB", (10, 10), color="white").save(img_path, "JPEG")
+
+        root = tk.Tk()
+        try:
+            editor = ExifEditorWindow(root, img_path)
+            editor.exif_text.delete("1.0", tk.END)
+            editor.exif_text.insert(tk.END, "[0th]\n")
+            editor.xmp_text.delete("1.0", tk.END)
+            editor.xmp_text.insert(tk.END, "No XMP data found.")
+
+            editor._save_metadata()
+            assert editor.status_label is not None
+            assert "saved successfully" in editor.status_label.cget("text").lower()
         finally:
             root.destroy()
 

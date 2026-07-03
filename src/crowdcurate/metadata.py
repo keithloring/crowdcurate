@@ -22,10 +22,12 @@ logger = logging.getLogger(__name__)
 # Disable specific style checks that would require large refactors.
 # pylint: disable=too-many-instance-attributes,too-many-branches,too-many-nested-blocks,no-else-break
 
+EXIF_TYPE_BYTE = 1
 EXIF_TYPE_ASCII = 2
 EXIF_TYPE_SHORT = 3
 EXIF_TYPE_LONG = 4
 EXIF_TYPE_RATIONAL = 5
+EXIF_TYPE_UNDEFINED = 7
 EXIF_TYPE_SSHORT = 8
 EXIF_TYPE_SLONG = 9
 EXIF_TYPE_SRATIONAL = 10
@@ -647,9 +649,9 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                 exif_bytes = piexif.dump(edited_exif)
                 piexif.insert(exif_bytes, str(self.file_path))
 
-            # Save XMP data
+            # Save XMP data only when the user actually entered XML content.
             xmp_content = self.xmp_text.get("1.0", tk.END).strip()
-            if xmp_content:
+            if xmp_content and xmp_content != "No XMP data found.":
                 self._save_xmp(xmp_content)
 
             logger.info("Metadata saved successfully to %s", self.file_path)
@@ -690,7 +692,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
     def _convert_exif_value(self, ifd_name: str, tag_id: int, value_str: str) -> Any:
         """Convert a string value to the appropriate EXIF data type."""
         tag_type = self.tag_types.get((ifd_name, tag_id), EXIF_TYPE_ASCII)
-        if tag_type == EXIF_TYPE_ASCII:
+        if tag_type in (EXIF_TYPE_BYTE, EXIF_TYPE_ASCII, EXIF_TYPE_UNDEFINED):
             return self._as_bytes(value_str)
         if tag_type in (EXIF_TYPE_SHORT, EXIF_TYPE_SSHORT):
             return int(value_str)
