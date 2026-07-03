@@ -45,15 +45,6 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.metadata_window = MetadataWindow(self.content_frame)
         self.metadata_window.show(before_widget=self.main_area)
 
-        self.info_header = ttk.Label(
-            self.main_area,
-            anchor="w",
-            text="",
-            wraplength=1000,
-            font=("Segoe UI", 12, "bold"),
-        )
-        self.info_header.pack(fill="x", pady=(0, 10))
-
         self.image_frame = ttk.Frame(self.main_area)
         self.image_frame.pack(expand=True, fill="both")
 
@@ -133,11 +124,6 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._current_slide = slide
         self._current_image_original = image
         self.metadata_window.update(slide)
-        info_text = (
-            f"File: {slide.source.name}  |  Path: {slide.source}  |  "
-            f"SHA256: {self.metadata_window.current_hash or ''}"
-        )
-        self.info_header.config(text=info_text)
         # Use centralized refresh to size and display the image
         self._refresh_current_image()
 
@@ -150,7 +136,6 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             justify="center",
         )
         self._current_photo = None
-        self.info_header.config(text="")
         self.metadata_window.clear()
 
     def update_status(self, text: str) -> None:
@@ -274,7 +259,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             "  i: Toggle info sidebar\n"
             "  u: Toggle upscaling\n"
             "  r: Refresh current image (after external edit)\n"
-            "  x: View/edit EXIF/IPTC data\n"
+            "  x: View/edit EXIF/IPTC/XMP metadata\n"
             "  ?: Show this help (also F1)\n"
             "  Ctrl+Shift +/-: Change metadata font size\n"
             "  Right-click image: Open with...\n"
@@ -284,9 +269,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
     def _on_edit_exif(self) -> None:
         """Open the EXIF/IPTC editor for the current image."""
         if self._current_slide is None:
-            messagebox.showinfo(
-                "EXIF Editor", "No image loaded.", parent=self.root
-            )
+            messagebox.showinfo("EXIF Editor", "No image loaded.", parent=self.root)
             return
         ExifEditorWindow(self.root, self._current_slide.source)
 
@@ -336,8 +319,12 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             args = shlex.split(cmd) + [path]
 
         try:
-            with subprocess.Popen(args, shell=False):  # noqa: S603
-                pass
+            # pylint: disable=consider-using-with
+            subprocess.Popen(
+                args,
+                shell=False,
+                start_new_session=True,
+            )  # noqa: S603  # pylint: disable=consider-using-with
         except FileNotFoundError:
             messagebox.showerror(
                 "Command not found",
