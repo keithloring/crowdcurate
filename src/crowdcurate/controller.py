@@ -78,6 +78,24 @@ class SlideshowController:
         if self._playing:
             self._schedule_next()
 
+    def jump_to(self, index: int) -> None:
+        slide = self.deck.jump_to(index)
+        if slide is None:
+            self.view.show_placeholder(
+                "No images were found in the selected directories."
+            )
+            self.view.update_status("No slides available")
+            return
+        image = self.cache.get(self.deck.current_index)
+        if image is None:
+            image = self.cache.load(slide)
+            self.cache.set(self.deck.current_index, image)
+        self.view.display_slide(slide, image)
+        self.view.update_status(self.deck.current_status())
+        self._schedule_preload()
+        if self._playing:
+            self._schedule_next()
+
     def toggle_playback(self) -> None:
         if self._playing:
             self.stop()

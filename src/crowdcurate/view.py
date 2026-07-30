@@ -89,6 +89,8 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.bind("<i>", lambda event: self._on_info())
         # Refresh current image after external edit with 'r'
         self.root.bind("r", lambda event: self._on_refresh())
+        # Jump to a specific slide index with 'j'
+        self.root.bind("j", lambda event: self._on_jump_to())
         # Edit EXIF/IPTC metadata with 'x'
         self.root.bind("x", lambda event: self._on_edit_exif())
         # Show help with '?' or F1
@@ -334,6 +336,38 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
                 # If controller-refresh is unavailable or fails, attempt local refresh
                 self.root.after_idle(self._refresh_current_image)
 
+    def _on_jump_to(self) -> None:
+        """Prompt for a slide number and jump the slideshow to that slide."""
+        if self._controller is None:
+            return
+
+        total = self._controller.deck.size
+        if total == 0:
+            messagebox.showinfo(
+                "Jump to slide",
+                "No slides are available to jump to.",
+                parent=self.root,
+            )
+            return
+
+        current = self._controller.deck.current_index + 1
+        prompt = (
+            f"Enter slide number (1-{total}, current {current}):"
+        )
+        index = simpledialog.askinteger(
+            "Jump to slide",
+            prompt,
+            parent=self.root,
+            minvalue=1,
+            maxvalue=total,
+            initialvalue=current,
+        )
+        if index is None:
+            return
+
+        self._controller.jump_to(index - 1)
+        self.root.after_idle(self._refresh_current_image)
+
     def _on_help(self) -> None:
         """Show a simple help popup listing available keystrokes."""
         help_text = (
@@ -341,6 +375,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             "  Left / Right: Previous / Next slide\n"
             "  Space: Play / Pause\n"
             "  i: Toggle info sidebar\n"
+            "  j: Jump to slide index\n"
             "  u: Toggle upscaling\n"
             "  r: Refresh current image (after external edit)\n"
             "  x: View/edit EXIF/IPTC/XMP metadata\n"
