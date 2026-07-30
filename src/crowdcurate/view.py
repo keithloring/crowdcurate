@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import shlex
 import subprocess
+import time
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from typing import TYPE_CHECKING, Any, Callable
@@ -32,6 +33,11 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._current_image_original: Image.Image | None = None
         self._resize_after_id: Any | None = None
         self._allow_upscale: bool = True
+        self._last_image_frame_size: tuple[int, int] | None = None
+        self._pending_configure_size: tuple[int, int] | None = None
+        self._pending_force_refresh: bool = False
+        self._stable_size_since: float | None = None
+        self._is_refreshing: bool = False
 
         self.controls_frame = ttk.Frame(self.root)
         self.controls_frame.pack(side="bottom", fill="x", padx=10, pady=10)
@@ -124,8 +130,10 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._current_slide = slide
         self._current_image_original = image
         self.metadata_window.update(slide)
-        # Use centralized refresh to size and display the image
-        self._refresh_current_image()
+        self._pending_configure_size = None
+        self._pending_force_refresh = True
+        self._stable_size_since = None
+        self._schedule_size_stable_refresh()
 
     def show_placeholder(self, text: str) -> None:
         self.image_label.config(
@@ -137,6 +145,75 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         )
         self._current_photo = None
         self.metadata_window.clear()
+
+    def _get_current_frame_size(self) -> tuple[int, int]:
+        width = (
+            self.image_frame.winfo_width()
+            or self.main_area.winfo_width()
+            or self.root.winfo_width()
+            or 800
+        )
+        height = (
+            self.image_frame.winfo_height()
+            or self.main_area.winfo_height()
+            or self.root.winfo_height()
+            or 600
+        )
+        return max(1, width), max(1, height)
+
+    def _size_is_close(
+        self, first: tuple[int, int], second: tuple[int, int]
+    ) -> bool:
+        if first is None or second is None:
+            return False
+        width_tol = max(12, int(min(first[0], second[0]) * 0.03))
+        height_tol = max(12, int(min(first[1], second[1]) * 0.03))
+        return (
+            abs(first[0] - second[0]) <= width_tol
+            and abs(first[1] - second[1]) <= height_tol
+        )
+
+    def _schedule_size_stable_refresh(self, force: bool = False) -> None:
+        if self._resize_after_id is not None:
+            try:
+                self.root.after_cancel(self._resize_after_id)
+            except tk.TclError:
+                pass
+        self._pending_force_refresh = self._pending_force_refresh or force
+        self._resize_after_id = self.root.after(150, self._process_configure_idle)
+
+    def _process_configure_idle(self) -> None:
+        self._resize_after_id = None
+        current_size = self._get_current_frame_size()
+        now = time.monotonic()
+        if current_size[0] < 50 or current_size[1] < 50:
+            self._stable_size_since = None
+            self._pending_configure_size = None
+            self._schedule_size_stable_refresh()
+            return
+
+        if self._pending_configure_size is None or not self._size_is_close(
+            current_size, self._pending_configure_size
+        ):
+            self._pending_configure_size = current_size
+            self._stable_size_since = now
+            self._schedule_size_stable_refresh()
+            return
+
+        if self._stable_size_since is None:
+            self._stable_size_since = now
+            self._schedule_size_stable_refresh()
+            return
+
+        stable_required = 1.0 if self._last_image_frame_size is None else 0.25
+        if now - self._stable_size_since < stable_required:
+            self._schedule_size_stable_refresh()
+            return
+
+        self._pending_configure_size = None
+        self._stable_size_since = None
+        self._refresh_current_image(force=self._pending_force_refresh)
+        self._pending_force_refresh = False
 
     def update_status(self, text: str) -> None:
         self.status_label.config(text=text)
@@ -156,7 +233,6 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.mainloop()
 
     def _resize_image(self, image: Image.Image) -> Image.Image:
-        self.root.update_idletasks()
         width = (
             self.image_frame.winfo_width()
             or self.main_area.winfo_width()
@@ -180,26 +256,38 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         )
         return image.resize(new_size, Image.Resampling.LANCZOS)
 
-    def _refresh_current_image(self) -> None:
+    def _refresh_current_image(self, force: bool = False) -> None:
         """Resize and display the currently loaded original image."""
-        if self._current_image_original is None:
+        if self._current_image_original is None or self._is_refreshing:
             return
+
+        current_size = self._get_current_frame_size()
+        if current_size[0] < 50 or current_size[1] < 50:
+            self._schedule_size_stable_refresh(force=force)
+            return
+
+        if (
+            not force
+            and self._last_image_frame_size is not None
+            and self._size_is_close(current_size, self._last_image_frame_size)
+        ):
+            return
+
+        self._is_refreshing = True
         try:
             resized_image = self._resize_image(self._current_image_original)
             self._current_photo = ImageTk.PhotoImage(resized_image)
             self.image_label.config(image=self._current_photo, text="")
+            self._last_image_frame_size = current_size
         except (OSError, tk.TclError):
             # If anything goes wrong re-show placeholder to avoid crashing UI
             self.show_placeholder("Image not found")
+        finally:
+            self._is_refreshing = False
 
     def _on_configure(self, _event: object) -> None:
-        # Debounce configure events so we don't thrash image resizing
-        if self._resize_after_id is not None:
-            try:
-                self.root.after_cancel(self._resize_after_id)
-            except tk.TclError:
-                pass
-        self._resize_after_id = self.root.after(100, self._on_configure_idle)
+        # Re-schedule a stable size refresh whenever the window layout changes.
+        self._schedule_size_stable_refresh()
 
     def _toggle_upscale(self) -> None:
         """Toggle whether images are allowed to be upscaled to fill the window."""
@@ -210,11 +298,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         # restore previous status after a short delay
         self.root.after(1500, lambda: self.status_label.config(text=prev))
         # refresh display to apply the new setting
-        self.root.after_idle(self._refresh_current_image)
-
-    def _on_configure_idle(self) -> None:
-        self._resize_after_id = None
-        self._refresh_current_image()
+        self.root.after_idle(lambda: self._refresh_current_image(force=True))
 
     def _on_previous(self) -> None:
         if self._controller is not None:

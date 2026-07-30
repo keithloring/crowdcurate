@@ -6,6 +6,7 @@ from pathlib import Path
 from .controller import SlideshowController
 from .model import SlideDeck
 from .view import SlideshowView
+import inspect
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -43,8 +44,9 @@ def main(argv: list[str] | None = None) -> int:
     directories = [Path(path).expanduser() for path in args.directories]
     deck = SlideDeck(directories)
     view = SlideshowView(title=args.title)
+    view_path = inspect.getsourcefile(SlideshowView) or '<unknown>'
+    print(f'Using SlideshowView implementation from: {view_path}')
     controller = SlideshowController(deck, view, args.interval)
-    view.root.update_idletasks()
-    controller.show_current()
+    view.root.after(100, controller.show_current)
     view.run()
     return 0
