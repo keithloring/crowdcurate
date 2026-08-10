@@ -439,11 +439,11 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
 
         try:
             # pylint: disable=consider-using-with
-            subprocess.Popen(
+            subprocess.Popen(  # noqa: S603  # pylint: disable=consider-using-with
                 args,
                 shell=False,
                 start_new_session=True,
-            )  # noqa: S603  # pylint: disable=consider-using-with
+            )
         except FileNotFoundError:
             messagebox.showerror(
                 "Command not found",

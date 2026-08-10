@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 from pathlib import Path
 
 from .controller import SlideshowController
 from .model import SlideDeck
 from .view import SlideshowView
-import inspect
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

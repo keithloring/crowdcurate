@@ -460,11 +460,9 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                 except (OSError, ValueError):
                     pass
         except Exception:  # pylint: disable=broad-except
-            pass  # XMP is optional, don't fail if not available
+            logger.debug("XMP is optional, skipping failed load", exc_info=True)
 
-    def _extract_xmp_from_jpeg(
-        self,
-    ) -> str:  # pylint: disable=too-many-branches,too-many-nested-blocks
+    def _extract_xmp_from_jpeg(self) -> str:  # pylint: disable=too-many-branches,too-many-nested-blocks  # noqa: C901
         """Extract XMP data from JPEG APP1 marker."""
         try:
             with open(self.file_path, "rb") as f:
@@ -550,8 +548,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
     def _pretty_print_xml(xml_string: str) -> str:
         """Add indentation to XML string for readability."""
         try:
-            root = ET.fromstring(xml_string)
-            return _indent_xml(root, 0)
+            return _indent_xml(ET.fromstring(xml_string), 0)  # noqa: S314
         except ET.ParseError:
             return xml_string
 
@@ -562,7 +559,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
 
         try:
             # Validate XMP XML structure
-            ET.fromstring(xmp_content)
+            ET.fromstring(xmp_content)  # noqa: S314
 
             # For JPEG, we need to write to the file
             if self.file_path.suffix.lower() in (".jpg", ".jpeg"):

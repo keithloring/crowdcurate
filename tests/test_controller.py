@@ -81,3 +81,19 @@ def test_toggle_playback_schedules_and_stops(tmp_path: Path) -> None:
     assert controller.is_playing is False
     assert view.play_button_text == "Play"
     assert view.canceled_id == "scheduled-0.1"
+
+
+def test_jump_to_slide_index(tmp_path: Path) -> None:
+    for index in range(3):
+        image_path = tmp_path / f"slide_{index}.jpg"
+        Image.new("RGB", (1, 1)).save(image_path, format="JPEG")
+
+    deck = SlideDeck([tmp_path])
+    view = DummyView()
+    controller = SlideshowController(deck, view, interval_seconds=0.1)
+
+    controller.jump_to(2)
+
+    assert view.displayed[-1].source.name == "slide_2.jpg"
+    assert view.status == "3/3 — slide_2.jpg"
+    assert deck.current_index == 2

@@ -4,7 +4,6 @@
 
 import shutil
 import tkinter as tk
-import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import piexif
