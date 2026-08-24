@@ -135,6 +135,11 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._current_slide = slide
         self._current_image_original = image
         self.metadata_window.update(slide)
+        if getattr(self, "_sequence_panel", None) is not None:
+            try:
+                self._sequence_panel.refresh()
+            except Exception:
+                pass
         self._pending_configure_size = None
         self._pending_force_refresh = True
         self._stable_size_since = None
