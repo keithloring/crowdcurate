@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .cache import ImageCache
+from .cache import ThumbnailCache
 from .model import SlideDeck
+from .sequence import SequenceStore, Sequence
 
 if TYPE_CHECKING:
     from .view import SlideshowView
@@ -20,6 +22,15 @@ class SlideshowController:
         self._after_id: Any | None = None
         self._preload_id: Any | None = None
         self.cache = ImageCache(max_size=3)
+        # thumbnail cache for UI strips (background loader)
+        try:
+            self.thumbnail_cache = ThumbnailCache(self.view.root)
+        except Exception:
+            # fallback if root isn't available
+            self.thumbnail_cache = ThumbnailCache(None)
+        # sequence support (lazy, minimal)
+        self.current_sequence: Sequence | None = None
+        self.sequence_store = SequenceStore()
         self.view.set_controller(self)
 
     @property
@@ -158,3 +169,44 @@ class SlideshowController:
         except (OSError, ValueError):
             # If reload fails, show placeholder and keep running
             self.view.show_placeholder("Image not found")
+
+    # Minimal sequence helper for view integration
+    def get_source_slides(self):
+        return list(self.deck.slides)
+
+    def create_sequence(self, name: str) -> None:
+        self.current_sequence = Sequence(name=name, items=[])
+
+    def insert_into_sequence(self, index: int, path: "Path") -> None:
+        if self.current_sequence is None:
+            self.create_sequence("Untitled")
+        idx = max(0, min(index, len(self.current_sequence.items)))
+        self.current_sequence.items.insert(idx, path)
+
+    def move_sequence_item(self, from_index: int, to_index: int) -> None:
+        if self.current_sequence is None:
+            return
+        items = self.current_sequence.items
+        if 0 <= from_index < len(items):
+            item = items.pop(from_index)
+            idx = max(0, min(to_index, len(items)))
+            items.insert(idx, item)
+
+    def remove_sequence_item(self, index: int) -> None:
+        if self.current_sequence is None:
+            return
+        items = self.current_sequence.items
+        if 0 <= index < len(items):
+            items.pop(index)
+
+    def clear_sequence(self) -> None:
+        if self.current_sequence is None:
+            return
+        self.current_sequence.items.clear()
+
+    def save_sequence(self, name: str | None = None):
+        if self.current_sequence is None:
+            return None
+        if name:
+            self.current_sequence.name = name
+        return self.sequence_store.save(self.current_sequence)

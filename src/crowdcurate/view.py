@@ -98,6 +98,9 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.bind("<F1>", lambda event: self._on_help())
         # Re-render the current image after window resizing (debounced)
         self.root.bind("<Configure>", self._on_configure)
+        # Toggle sequence panel (created lazily)
+        self._sequence_panel: Any | None = None
+        self.root.bind("s", lambda event: self._toggle_sequence())
         # Toggle upscaling on/off with 'u'
         self.root.bind("u", lambda event: self._toggle_upscale())
         self.root.bind(
@@ -324,6 +327,23 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             self._current_slide,
             before_widget=self.main_area,
         )
+        self.root.after_idle(self._refresh_current_image)
+
+    def _toggle_sequence(self) -> None:
+        # Lazy import/creation to avoid affecting init ordering
+        if getattr(self, "_sequence_panel", None) is None:
+            try:
+                from .sequence import SequencePanel
+
+                self._sequence_panel = SequencePanel(self.main_area, self._controller)
+            except Exception:
+                self._sequence_panel = None
+        if self._sequence_panel is None:
+            return
+        try:
+            self._sequence_panel.toggle(before_widget=self.image_frame)
+        except Exception:
+            pass
         self.root.after_idle(self._refresh_current_image)
 
     def _on_refresh(self) -> None:
