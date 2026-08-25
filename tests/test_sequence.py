@@ -1,3 +1,4 @@
+import io
 from pathlib import Path
 import tempfile
 import tkinter as tk
@@ -294,18 +295,36 @@ def test_sequence_panel_export_video_uses_sequence_images():
         panel = SequencePanel(root, DummyController())
         out_path = temp_dir / "out.mp4"
 
-        def fake_run(cmd, *args, **kwargs):
+        seen = {}
+
+        class FakeProcess:
+            def __init__(self, cmd):
+                self.cmd = cmd
+                self.stdout = io.StringIO("frame=000012 fps=30.0 q=27.0 size=...\n")
+                self.returncode = 0
+
+            def poll(self):
+                return self.returncode
+
+            def wait(self, timeout=None):
+                return self.returncode
+
+            def terminate(self):
+                self.returncode = 0
+
+        def fake_popen(cmd, *args, **kwargs):
             list_path = next(arg for arg in cmd if arg.endswith(".txt"))
             list_text = Path(list_path).read_text(encoding="utf-8")
             assert "duration 2.0" in list_text
             assert "duration 0.037" in list_text
-            return None
+            seen["cmd"] = cmd
+            return FakeProcess(cmd)
 
-        with patch("crowdcurate.sequence.filedialog.asksaveasfilename", return_value=str(out_path)), patch("crowdcurate.sequence.subprocess.run", side_effect=fake_run) as run_mock:
+        with patch("crowdcurate.sequence.filedialog.asksaveasfilename", return_value=str(out_path)), patch("crowdcurate.sequence.subprocess.Popen", side_effect=fake_popen) as popen_mock, patch("crowdcurate.sequence.threading.Thread.start", return_value=None):
             panel._export_sequence_video()
 
-        assert run_mock.call_count == 1
-        cmd = run_mock.call_args[0][0]
+        assert popen_mock.call_count == 1
+        cmd = seen["cmd"]
         assert cmd[0] == "ffmpeg"
         assert "-y" in cmd
         assert "-f" in cmd
@@ -314,6 +333,57 @@ def test_sequence_panel_export_video_uses_sequence_images():
         assert "0" in cmd
         assert "-i" in cmd
         assert str(out_path) in cmd
+    finally:
+        root.destroy()
+
+
+def test_ffmpeg_progress_parser_tracks_generated_frame_count():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+
+        panel = SequencePanel(root, DummyController())
+
+        assert panel._parse_ffmpeg_progress("frame=000012 fps=30.0 q=27.0 size=...", total_frames=24) == 50.0
+        assert panel._parse_ffmpeg_progress("frame=000024 fps=30.0 q=27.0 size=...", total_frames=24) == 100.0
+        assert panel._parse_ffmpeg_progress("some unrelated line", total_frames=24) is None
+    finally:
+        root.destroy()
+
+
+def test_play_exported_video_uses_vlc():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+
+        panel = SequencePanel(root, DummyController())
+        output_path = Path(tempfile.mkdtemp()) / "demo.mp4"
+
+        with patch("crowdcurate.sequence.subprocess.Popen") as popen_mock:
+            panel._play_exported_video(output_path)
+
+        popen_mock.assert_called_once()
+        cmd = popen_mock.call_args[0][0]
+        assert cmd[0] == "vlc"
+        assert str(output_path) in cmd
+    finally:
+        root.destroy()
+
+
+def test_export_progress_spans_preparation_and_ffmpeg_runtime():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        panel = SequencePanel(root, type("DummyController", (), {"current_sequence": Sequence(name="Demo", items=[]), "get_source_slides": lambda self: []})())
+
+        assert panel._combine_export_progress(50.0, 85.0) == 92.5
+        assert panel._combine_export_progress(100.0, 85.0) == 100.0
     finally:
         root.destroy()
 

@@ -4,9 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import tempfile
+import threading
 from typing import Any
 
 import tkinter as tk
@@ -362,6 +364,172 @@ class SequencePanel:
             self.controller.current_sequence.items.clear()
             self.refresh()
 
+    def _parse_ffmpeg_progress(self, line: str, total_frames: int) -> float | None:
+        if total_frames <= 0:
+            return None
+        match = re.search(r"frame\s*=\s*(\d+)", line, flags=re.IGNORECASE)
+        if match is None:
+            return None
+        try:
+            frame_count = int(match.group(1))
+        except ValueError:
+            return None
+        progress = (frame_count / total_frames) * 100.0
+        return max(0.0, min(100.0, progress))
+
+    def _play_exported_video(self, output_path: Path | str) -> None:
+        path = Path(output_path).expanduser().resolve()
+        try:
+            subprocess.Popen(["vlc", str(path)])
+        except FileNotFoundError:
+            messagebox.showerror("Play video", "VLC is not installed or not available on PATH.", parent=self.parent)
+
+    def _show_ffmpeg_status_dialog(self, total_frames: int) -> tk.Toplevel:
+        dialog = tk.Toplevel(self.parent)
+        dialog.title("Exporting MP4")
+        dialog.transient(self.parent)
+        dialog.grab_set()
+        dialog.minsize(450, 250)
+
+        status_var = tk.StringVar(value="Preparing export...")
+        progress_var = tk.DoubleVar(value=0.0)
+
+        header_row = ttk.Frame(dialog)
+        header_row.pack(fill="x", padx=12, pady=(12, 6))
+        ttk.Label(header_row, text="Exporting sequence to MP4", font=("Segoe UI", 10, "bold")).pack(side="left")
+
+        button_row = ttk.Frame(dialog)
+        button_row.pack(fill="x", padx=12, pady=(0, 8))
+        play_btn = ttk.Button(button_row, text="Play", state="disabled")
+        play_btn.pack(side="right")
+        cancel_btn = ttk.Button(button_row, text="Cancel")
+        cancel_btn.pack(side="right", padx=(0, 8))
+
+        ttk.Label(dialog, textvariable=status_var).pack(anchor="w", padx=12)
+
+        progress = ttk.Progressbar(dialog, orient="horizontal", mode="determinate", maximum=100, value=0)
+        progress.pack(fill="x", padx=12, pady=(8, 12))
+
+        text = tk.Text(dialog, wrap="word", height=12, state="disabled", bg="#f8f8f8")
+        text_scroll = ttk.Scrollbar(dialog, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=text_scroll.set)
+        text.pack(fill="both", expand=True, padx=(12, 0), pady=(0, 12), side="left")
+        text_scroll.pack(fill="y", side="right", padx=(0, 12), pady=(0, 12))
+
+        dialog.status_var = status_var
+        dialog.progress_var = progress_var
+        dialog.progress_bar = progress
+        dialog.text_widget = text
+        dialog.cancel_button = cancel_btn
+        dialog.play_button = play_btn
+        dialog._cancel_requested = False
+        dialog._process = None
+        dialog._cleanup_temp_dir = None
+        return dialog
+
+    def _append_ffmpeg_output(self, dialog: tk.Toplevel, line: str) -> None:
+        if not dialog.winfo_exists():
+            return
+        text_widget = dialog.text_widget
+        text_widget.configure(state="normal")
+        text_widget.insert("end", f"{line}\n")
+        text_widget.see("end")
+        text_widget.configure(state="disabled")
+
+    def _combine_export_progress(self, ffmpeg_progress_percent: float, ffmpeg_phase_start_percent: float) -> float:
+        return max(0.0, min(100.0, ffmpeg_phase_start_percent + (ffmpeg_progress_percent / 100.0) * (100.0 - ffmpeg_phase_start_percent)))
+
+    def _set_export_progress(self, dialog: tk.Toplevel, percent: float, status: str | None = None) -> None:
+        if not dialog.winfo_exists():
+            return
+        dialog.progress_bar["maximum"] = 100
+        dialog.progress_bar["value"] = max(0.0, min(100.0, percent))
+        if status is not None:
+            dialog.status_var.set(status)
+
+    def _update_ffmpeg_progress(self, dialog: tk.Toplevel, progress_value: float) -> None:
+        if not dialog.winfo_exists():
+            return
+        combined = self._combine_export_progress(progress_value, 80.0)
+        dialog.progress_bar["maximum"] = 100
+        dialog.progress_bar["value"] = min(99.9, max(0, combined))
+        dialog.status_var.set(f"{combined:.1f}% complete")
+
+    def _cancel_ffmpeg_process(self, dialog: tk.Toplevel, process: subprocess.Popen[str] | None) -> None:
+        if dialog._cancel_requested:
+            return
+        dialog._cancel_requested = True
+        dialog.status_var.set("Cancelling export...")
+        dialog.cancel_button.configure(state="disabled")
+        if process is None or process.poll() is not None:
+            dialog.destroy()
+            return
+        try:
+            process.terminate()
+        except Exception:
+            pass
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                process.kill()
+            except Exception:
+                pass
+            process.wait(timeout=5)
+
+    def _handle_ffmpeg_finish(
+        self,
+        dialog: tk.Toplevel,
+        process: subprocess.Popen[str],
+        output_path: Path,
+        temp_dir: Path,
+    ) -> None:
+        if not dialog.winfo_exists():
+            return
+
+        if dialog._cancel_requested:
+            dialog.status_var.set("Export cancelled.")
+            dialog.cancel_button.configure(text="Close")
+            dialog.cancel_button.configure(command=dialog.destroy)
+            dialog.cancel_button.configure(state="normal")
+            dialog.play_button.configure(state="disabled")
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            dialog.after(250, dialog.destroy)
+            return
+
+        return_code = process.returncode
+        if return_code == 0:
+            self._set_export_progress(dialog, 100.0, "Export complete")
+            dialog.cancel_button.configure(text="Close")
+            dialog.cancel_button.configure(command=dialog.destroy)
+            dialog.cancel_button.configure(state="normal")
+            dialog.play_button.configure(state="normal", command=lambda: self._play_exported_video(output_path))
+            messagebox.showinfo("Export complete", f"Video saved to: {output_path}", parent=self.parent)
+        else:
+            self._set_export_progress(dialog, 0.0, f"Export failed (exit code {return_code})")
+            dialog.cancel_button.configure(text="Close")
+            dialog.cancel_button.configure(command=dialog.destroy)
+            dialog.cancel_button.configure(state="normal")
+            dialog.play_button.configure(state="disabled")
+            messagebox.showerror("Export video", f"ffmpeg failed while exporting the video to {output_path}.", parent=self.parent)
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def _read_ffmpeg_output(self, process: subprocess.Popen[str], dialog: tk.Toplevel, total_frames: int, output_path: Path, temp_dir: Path) -> None:
+        try:
+            if process.stdout is not None:
+                for raw_line in iter(process.stdout.readline, ""):
+                    line = raw_line.rstrip()
+                    if not line:
+                        continue
+                    dialog.after(0, self._append_ffmpeg_output, dialog, line)
+                    progress_value = self._parse_ffmpeg_progress(line, total_frames)
+                    if progress_value is not None:
+                        dialog.after(0, self._update_ffmpeg_progress, dialog, progress_value)
+            return_code = process.wait()
+            dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)
+        except Exception:
+            dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)
+
     def _export_sequence_video(self) -> None:
         if self.controller is None:
             return
@@ -383,10 +551,18 @@ class SequencePanel:
         output_path = Path(output_path).expanduser().resolve()
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
+        dialog = self._show_ffmpeg_status_dialog(total_frames=max(1, len(seq.items)))
+        self._set_export_progress(dialog, 0.0, "Preparing MP4 export...")
+        self._append_ffmpeg_output(dialog, "Preparing MP4 export...")
+        self._append_ffmpeg_output(dialog, f"Processing {len(seq.items)} sequence items.")
+        self._append_ffmpeg_output(dialog, "Generating source frames...")
+        dialog.update_idletasks()
+
         temp_dir = Path(tempfile.mkdtemp(prefix="crowdcurate-seq-"))
         frame_list_path = temp_dir / "frames.txt"
         frame_paths: list[Path] = []
         try:
+            source_total = max(1, len(seq.items))
             for index, item_path in enumerate(seq.items, start=1):
                 source = Path(item_path)
                 if not source.exists():
@@ -416,17 +592,28 @@ class SequencePanel:
                         frame_path = temp_dir / f"frame_{index:04d}.png"
                         canvas.save(frame_path, format="PNG")
                         frame_paths.append(frame_path)
+                    source_progress = (index / source_total) * 30.0
+                    self._set_export_progress(dialog, source_progress, "Generating source frames...")
+                    dialog.update_idletasks()
                 except Exception:
                     continue
 
             if not frame_paths:
+                dialog.destroy()
                 messagebox.showerror("Export video", "No valid image frames were found to export.", parent=self.parent)
+                shutil.rmtree(temp_dir, ignore_errors=True)
                 return
+
+            self._append_ffmpeg_output(dialog, f"Built {len(frame_paths)} source frames; preparing fades and export list...")
+            self._set_export_progress(dialog, 35.0, "Preparing ffmpeg export...")
+            dialog.update_idletasks()
 
             fade_duration = 0.75
             fade_steps = 20
             step_duration = fade_duration / fade_steps
             fade_paths: list[Path] = []
+            fade_total = max(1, len(frame_paths) * (fade_steps + 2))
+            fade_processed = 0
             for frame_path in frame_paths:
                 fade_paths.append(frame_path)
                 with Image.open(frame_path) as img:
@@ -438,10 +625,18 @@ class SequencePanel:
                     fade_frame = temp_dir / f"fade_{frame_path.stem}_{step:02d}.png"
                     combined.convert("RGB").save(fade_frame, format="PNG")
                     fade_paths.append(fade_frame)
+                    fade_processed += 1
+                    progress = 35.0 + (fade_processed / fade_total) * 45.0
+                    self._set_export_progress(dialog, progress, "Preparing fades...")
+                    dialog.update_idletasks()
                 black = Image.new("RGB", (1280, 720), (0, 0, 0))
                 black_path = temp_dir / f"black_{frame_path.stem}.png"
                 black.save(black_path, format="PNG")
                 fade_paths.append(black_path)
+                fade_processed += 1
+                progress = 35.0 + (fade_processed / fade_total) * 45.0
+                self._set_export_progress(dialog, progress, "Preparing fades...")
+                dialog.update_idletasks()
 
             with frame_list_path.open("w", encoding="utf-8") as fh:
                 for i, frame_path in enumerate(fade_paths):
@@ -468,14 +663,32 @@ class SequencePanel:
                 "yuv420p",
                 str(output_path),
             ]
-            subprocess.run(ffmpeg_cmd, check=True)
-            messagebox.showinfo("Export complete", f"Video saved to: {output_path}", parent=self.parent)
-        except FileNotFoundError:
-            messagebox.showerror("Export video", "ffmpeg is not installed or not available on PATH.", parent=self.parent)
-        except subprocess.CalledProcessError:
-            messagebox.showerror("Export video", f"ffmpeg failed while exporting the video to {output_path}.", parent=self.parent)
-        finally:
+
+            self._set_export_progress(dialog, 80.0, "Launching ffmpeg...")
+            self._append_ffmpeg_output(dialog, "Encoding MP4 with ffmpeg...")
+            self._append_ffmpeg_output(dialog, f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
+            dialog.cancel_button.configure(command=lambda: self._cancel_ffmpeg_process(dialog, dialog._process))
+            dialog.play_button.configure(command=lambda: self._play_exported_video(output_path))
+            try:
+                process = subprocess.Popen(
+                    ffmpeg_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1,
+                )
+            except FileNotFoundError:
+                dialog.destroy()
+                messagebox.showerror("Export video", "ffmpeg is not installed or not available on PATH.", parent=self.parent)
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                return
+
+            dialog._process = process
+            threading.Thread(target=self._read_ffmpeg_output, args=(process, dialog, max(1, len(fade_paths)), output_path, temp_dir), daemon=True).start()
+            dialog.protocol("WM_DELETE_WINDOW", lambda: self._cancel_ffmpeg_process(dialog, dialog._process))
+        except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
+            messagebox.showerror("Export video", f"ffmpeg failed while exporting the video to {output_path}.", parent=self.parent)
 
     # DnD handlers
     def _start_drag_source(self, event: tk.Event, slide: SlideItem) -> None:
