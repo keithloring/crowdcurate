@@ -1,0 +1,374 @@
+from pathlib import Path
+import tempfile
+import tkinter as tk
+from unittest.mock import patch
+
+from PIL import Image, ImageTk
+
+from crowdcurate.cache import ThumbnailCache
+from crowdcurate.sequence import Sequence, SequencePanel, SequenceStore
+
+
+def test_sequence_save_load(tmp_path):
+    store_dir = tmp_path / "store"
+    store = SequenceStore(base_dir=store_dir)
+    seq = Sequence(name="TestSeq", items=[Path("/tmp/a.jpg"), Path("/tmp/b.jpg")])
+    saved = store.save(seq)
+    assert saved.exists()
+    loaded = store.load("TestSeq")
+    assert loaded is not None
+    assert loaded.name == "TestSeq"
+    assert [str(p) for p in loaded.items] == [str(Path("/tmp/a.jpg")), str(Path("/tmp/b.jpg"))]
+
+
+def test_sequence_panel_uses_real_thumbnail_images_before_async_cache_fills():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class PlaceholderCache:
+            def __init__(self):
+                self._cache = {}
+
+            def get_photo(self, path, max_size=(120, 80), on_ready=None):
+                img = Image.new("RGB", max_size, (200, 200, 200))
+                photo = ImageTk.PhotoImage(img)
+                self._cache[str(path)] = photo
+                return photo
+
+        class DummyController:
+            def __init__(self, image_path):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self.thumbnail_cache = PlaceholderCache()
+                self.cache = type("Cache", (), {"get_thumbnail": lambda self, slide, max_size=(120, 80): Image.open(slide.source).copy()})()
+                self._image_path = image_path
+
+            def get_source_slides(self):
+                return []
+
+        p = Path(tempfile.mkdtemp()) / "thumb.png"
+        Image.new("RGB", (200, 150), "blue").save(p)
+
+        panel = SequencePanel(root, DummyController(p))
+        photo = panel._load_photo(p, (120, 80))
+
+        assert photo is not None
+        assert photo.width() > 0
+        assert photo.height() > 0
+    finally:
+        root.destroy()
+
+
+def test_thumbnail_cache_uses_unique_placeholder_per_path():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        cache = ThumbnailCache(root)
+        first = cache.get_photo(Path("/tmp/a.png"))
+        second = cache.get_photo(Path("/tmp/b.png"))
+        assert first is not second
+        cache.shutdown()
+    finally:
+        root.destroy()
+
+
+def test_thumbnail_cache_keeps_on_ready_callbacks_for_inflight_paths():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        cache = ThumbnailCache(root)
+        p = Path(tempfile.mkdtemp()) / "inflight.png"
+        Image.new("RGB", (64, 64), "green").save(p)
+
+        seen = []
+
+        def callback(path, photo):
+            seen.append((str(path), photo is not None))
+
+        first = cache.get_photo(p, max_size=(32, 32), on_ready=callback)
+        second = cache.get_photo(p, max_size=(32, 32), on_ready=callback)
+
+        assert first is not None
+        assert second is not None
+
+        def finish():
+            root.quit()
+
+        root.after(250, finish)
+        root.mainloop()
+
+        assert len(seen) == 2
+        assert all(str(path) == str(p) for path, _ in seen)
+        cache.shutdown()
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_highlights_current_source_thumbnail_and_click_selects_it():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self.deck = type("Deck", (), {"slides": [], "current_index": 0, "get_current": lambda self: self.slides[self.current_index] if self.slides else None})()
+                self.deck.slides = [
+                    type("Slide", (), {"source": Path(__file__).with_name("alpha.png")})(),
+                    type("Slide", (), {"source": Path(__file__).with_name("beta.png")})(),
+                ]
+
+            def get_source_slides(self):
+                return self.deck.slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+
+        controller.deck.current_index = 1
+        panel.refresh()
+
+        selected = panel._source_widgets[str(controller.deck.get_current().source)]
+        assert selected.cget("highlightthickness") > 0
+        assert selected.cget("relief") == "solid"
+
+        panel._select_source_slide(controller.deck.slides[0])
+        assert controller.deck.current_index == 0
+    finally:
+        root.destroy()
+
+
+def test_source_click_only_updates_selection_without_full_refresh():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type("Slide", (), {"source": Path(__file__).with_name("alpha.png")})(),
+                    type("Slide", (), {"source": Path(__file__).with_name("beta.png")})(),
+                ]
+                self.deck = type("Deck", (), {"current_index": 0, "get_current": lambda self: self._slides[self.current_index]})()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel._source_widgets = {
+            str(controller._slides[0].source): tk.Label(root),
+            str(controller._slides[1].source): tk.Label(root),
+        }
+
+        calls = []
+        original = SequencePanel.refresh
+
+        def tracking(self):
+            calls.append("refresh")
+            return original(self)
+
+        SequencePanel.refresh = tracking
+        try:
+            panel._select_source_slide(controller._slides[1])
+            assert controller.deck.current_index == 1
+            assert calls == []
+        finally:
+            SequencePanel.refresh = original
+    finally:
+        root.destroy()
+
+
+def test_source_panel_scroll_position_is_preserved_on_selection_refresh():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type("Slide", (), {"source": Path(__file__).with_name(f"img{i}.png")})()
+                    for i in range(20)
+                ]
+                self.deck = type("Deck", (), {"current_index": 0, "get_current": lambda self: self._slides[self.current_index]})()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+        panel._source_canvas.xview_moveto(0.75)
+        root.update_idletasks()
+        panel._populate_source()
+
+        assert abs(float(panel._source_canvas.xview()[0]) - 0.75) < 0.2
+    finally:
+        root.destroy()
+
+
+def test_active_source_drag_is_not_interrupted_by_sequence_drag_start():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/seq.png")])
+
+        panel = SequencePanel(root, DummyController())
+        source_slide = type("Slide", (), {"source": Path("/tmp/source.png")})()
+        panel._dragging = True
+        panel._drag_source_path = source_slide.source
+        panel._drag_from_index = None
+
+        panel._start_drag_sequence(None, 0)
+
+        assert panel._dragging is True
+        assert panel._drag_source_path == source_slide.source
+        assert panel._drag_from_index is None
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_controls_move_and_remove_items():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png"), Path("/tmp/c.png")])
+                self.moves = []
+                self.removed = []
+
+            def move_sequence_item(self, from_index, to_index):
+                self.moves.append((from_index, to_index))
+                items = self.current_sequence.items
+                if 0 <= from_index < len(items):
+                    item = items.pop(from_index)
+                    idx = max(0, min(to_index, len(items)))
+                    items.insert(idx, item)
+
+            def remove_sequence_item(self, index):
+                self.removed.append(index)
+                if 0 <= index < len(self.current_sequence.items):
+                    self.current_sequence.items.pop(index)
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+
+        panel._move_sequence_item(0, 1)
+        panel._remove_sequence_item(1)
+
+        assert controller.moves == [(0, 1)]
+        assert controller.removed == [1]
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_export_video_uses_sequence_images():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        temp_dir = Path(tempfile.mkdtemp())
+        image_one = temp_dir / "a.png"
+        image_two = temp_dir / "b.png"
+        Image.new("RGB", (32, 32), "red").save(image_one)
+        Image.new("RGB", (32, 32), "blue").save(image_two)
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(
+                    name="Demo",
+                    items=[image_one, image_two],
+                )
+
+        panel = SequencePanel(root, DummyController())
+        out_path = temp_dir / "out.mp4"
+
+        def fake_run(cmd, *args, **kwargs):
+            list_path = next(arg for arg in cmd if arg.endswith(".txt"))
+            list_text = Path(list_path).read_text(encoding="utf-8")
+            assert "duration 2.0" in list_text
+            assert "duration 0.037" in list_text
+            return None
+
+        with patch("crowdcurate.sequence.filedialog.asksaveasfilename", return_value=str(out_path)), patch("crowdcurate.sequence.subprocess.run", side_effect=fake_run) as run_mock:
+            panel._export_sequence_video()
+
+        assert run_mock.call_count == 1
+        cmd = run_mock.call_args[0][0]
+        assert cmd[0] == "ffmpeg"
+        assert "-y" in cmd
+        assert "-f" in cmd
+        assert "concat" in cmd
+        assert "-safe" in cmd
+        assert "0" in cmd
+        assert "-i" in cmd
+        assert str(out_path) in cmd
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_show_refreshes_once():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+
+            def get_source_slides(self):
+                return []
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        calls = []
+        original = SequencePanel.refresh
+
+        def tracking(self):
+            calls.append("refresh")
+            return original(self)
+
+        SequencePanel.refresh = tracking
+        try:
+            panel.show()
+            root.update_idletasks()
+            assert calls == ["refresh"]
+        finally:
+            SequencePanel.refresh = original
+    finally:
+        root.destroy()
+
+
+def test_sequence_redraw_does_not_force_nested_tk_updates():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+
+            def get_source_slides(self):
+                return []
+
+        panel = SequencePanel(root, DummyController())
+
+        class GuardCanvas(tk.Canvas):
+            def update(self):
+                raise AssertionError("nested Tk update() should not run during redraw")
+
+        panel._source_canvas = GuardCanvas(root)
+        panel._source_canvas.pack()
+
+        panel._redraw_canvas(panel._source_canvas)
+    finally:
+        root.destroy()
