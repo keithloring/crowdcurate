@@ -90,6 +90,8 @@ class SequencePanel:
         self._source_photos: list[ImageTk.PhotoImage] = []
         self._sequence_photos: list[ImageTk.PhotoImage] = []
         self._source_widgets: dict[str, tk.Label] = {}
+        self._source_widget_ids: dict[str, int] = {}
+        self._last_source_selection_key: str | None = None
 
         # drag state
         self._dragging = False
@@ -200,6 +202,40 @@ class SequencePanel:
         except Exception:
             return str(current_slide.source)
 
+    def _scroll_source_selection_into_view(self) -> None:
+        if self._source_canvas is None:
+            return
+        try:
+            self._source_canvas.update_idletasks()
+        except tk.TclError:
+            pass
+        selected_key = self._current_source_key()
+        if selected_key is None:
+            return
+        item_id = self._source_widget_ids.get(selected_key)
+        if item_id is None:
+            return
+        try:
+            bbox = self._source_canvas.bbox(item_id)
+        except tk.TclError:
+            return
+        if not bbox:
+            return
+        left, _, right, _ = bbox
+        canvas_width = max(1, self._source_canvas.winfo_width())
+        total_width = self._source_canvas.bbox("all")
+        if not total_width:
+            return
+        scroll_width = max(1, total_width[2] - total_width[0])
+        view_left = self._source_canvas.canvasx(0)
+        view_right = self._source_canvas.canvasx(canvas_width)
+        if left < view_left:
+            target = max(0.0, (left - 12) / scroll_width)
+            self._source_canvas.xview_moveto(target)
+        elif right > view_right:
+            target = min(1.0, (right - canvas_width + 12) / scroll_width)
+            self._source_canvas.xview_moveto(target)
+
     def _update_source_selection_state(self) -> None:
         selected_key = self._current_source_key()
         for path_key, label in self._source_widgets.items():
@@ -211,6 +247,9 @@ class SequencePanel:
                 highlightbackground="#fef3c7" if is_selected else "white",
                 highlightcolor="#fef3c7" if is_selected else "white",
             )
+        if self._source_canvas is not None and selected_key != self._last_source_selection_key:
+            self._source_canvas.after_idle(self._scroll_source_selection_into_view)
+        self._last_source_selection_key = selected_key
 
     def _select_source_slide(self, slide: SlideItem) -> None:
         if self.controller is None:
@@ -226,15 +265,19 @@ class SequencePanel:
                     self.controller.deck.jump_to(idx)
                 break
         self._update_source_selection_state()
+        if self._source_canvas is not None:
+            self._scroll_source_selection_into_view()
 
     def _populate_source(self) -> None:
         if self._source_canvas is None or self.controller is None:
             return
         old_scroll = self._source_canvas.xview()[0]
+        previous_key = self._last_source_selection_key or self._current_source_key()
         slides = self.controller.get_source_slides() if hasattr(self.controller, "get_source_slides") else []
         slides_sorted = sorted(slides, key=lambda s: s.source.name.lower())
         self._source_canvas.delete("all")
         self._source_widgets.clear()
+        self._source_widget_ids.clear()
         self._source_photos.clear()
         x = 4
         padding = 6
@@ -244,11 +287,13 @@ class SequencePanel:
             lbl = tk.Label(self._source_canvas, image=photo, bg='white', bd=0, highlightthickness=0, relief='flat', padx=2, pady=2)
             if photo is not None:
                 self._source_photos.append(photo)
-            self._source_canvas.create_window(x, 4, anchor='nw', window=lbl)
+            window_id = self._source_canvas.create_window(x, 4, anchor='nw', window=lbl)
             try:
-                self._source_widgets[str(slide.source.resolve())] = lbl
+                path_key = str(slide.source.resolve())
             except Exception:
-                self._source_widgets[str(slide.source)] = lbl
+                path_key = str(slide.source)
+            self._source_widgets[path_key] = lbl
+            self._source_widget_ids[path_key] = window_id
             if hasattr(self.controller, 'thumbnail_cache'):
                 def make_on_ready(widget):
                     def _on_ready(p, ph):
@@ -270,11 +315,18 @@ class SequencePanel:
             lbl.bind("<B1-Motion>", self._on_drag_motion)
             lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += 126 + padding
-        self._update_source_selection_state()
         self._source_canvas.config(scrollregion=(0, 0, x, h))
-        if old_scroll > 0:
+        self._source_canvas.update_idletasks()
+        selected_key = self._current_source_key()
+        if old_scroll > 0 and selected_key == previous_key:
             self._source_canvas.xview_moveto(old_scroll)
+        self._update_source_selection_state()
+        if old_scroll > 0 and selected_key == previous_key:
+            self._source_canvas.xview_moveto(old_scroll)
+        else:
+            self._scroll_source_selection_into_view()
         self._redraw_canvas(self._source_canvas)
+        self._last_source_selection_key = selected_key
 
     def _move_sequence_item(self, index: int, offset: int) -> None:
         if self.controller is None:
@@ -325,15 +377,13 @@ class SequencePanel:
                     max_size=(120, 80),
                     on_ready=make_on_ready(lbl),
                 )
-            ctrl = ttk.Frame(frame)
-            ttk.Button(ctrl, text='◀', width=2, command=lambda i=idx: self._move_sequence_item(i, -1)).pack(side='left')
-            ttk.Button(ctrl, text='▶', width=2, command=lambda i=idx: self._move_sequence_item(i, 1)).pack(side='left')
-            ttk.Button(ctrl, text='✖', width=2, command=lambda i=idx: self._remove_sequence_item(i)).pack(side='left')
-            ctrl.pack()
             self._sequence_canvas.create_window(x, 4, anchor='nw', window=frame)
             frame.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
             frame.bind("<B1-Motion>", self._on_drag_motion)
             frame.bind("<ButtonRelease-1>", self._end_drag)
+            lbl.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
+            lbl.bind("<B1-Motion>", self._on_drag_motion)
+            lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += slot_w
         self._sequence_canvas.config(scrollregion=(0, 0, x, 120))
         self._sequence_canvas.xview_moveto(0)
@@ -525,7 +575,7 @@ class SequencePanel:
                     progress_value = self._parse_ffmpeg_progress(line, total_frames)
                     if progress_value is not None:
                         dialog.after(0, self._update_ffmpeg_progress, dialog, progress_value)
-            return_code = process.wait()
+            process.wait()
             dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)
         except Exception:
             dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)

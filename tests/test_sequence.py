@@ -217,6 +217,43 @@ def test_source_panel_scroll_position_is_preserved_on_selection_refresh():
         root.destroy()
 
 
+def test_source_panel_scrolls_selected_thumbnail_into_view():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type("Slide", (), {"source": Path(__file__).with_name(f"source_{i}.png")})()
+                    for i in range(20)
+                ]
+                self.deck = type("Deck", (), {"current_index": 19, "get_current": lambda self: self._slides[self.current_index]})()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+        panel._source_canvas.xview_moveto(0.0)
+        root.update_idletasks()
+
+        panel._last_source_selection_key = str(controller._slides[0].source)
+        controller.deck.current_index = 19
+        panel._update_source_selection_state()
+        root.update_idletasks()
+
+        assert float(panel._source_canvas.xview()[0]) > 0.0
+    finally:
+        root.destroy()
+
+
 def test_active_source_drag_is_not_interrupted_by_sequence_drag_start():
     root = tk.Tk()
     root.withdraw()
@@ -240,37 +277,21 @@ def test_active_source_drag_is_not_interrupted_by_sequence_drag_start():
         root.destroy()
 
 
-def test_sequence_panel_controls_move_and_remove_items():
+def test_sequence_panel_populates_without_reorder_buttons():
     root = tk.Tk()
     root.withdraw()
     try:
         class DummyController:
             def __init__(self):
-                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png"), Path("/tmp/c.png")])
-                self.moves = []
-                self.removed = []
-
-            def move_sequence_item(self, from_index, to_index):
-                self.moves.append((from_index, to_index))
-                items = self.current_sequence.items
-                if 0 <= from_index < len(items):
-                    item = items.pop(from_index)
-                    idx = max(0, min(to_index, len(items)))
-                    items.insert(idx, item)
-
-            def remove_sequence_item(self, index):
-                self.removed.append(index)
-                if 0 <= index < len(self.current_sequence.items):
-                    self.current_sequence.items.pop(index)
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png")])
 
         controller = DummyController()
         panel = SequencePanel(root, controller)
 
-        panel._move_sequence_item(0, 1)
-        panel._remove_sequence_item(1)
+        with patch("crowdcurate.sequence.ttk.Button") as button_mock:
+            panel._populate_sequence()
 
-        assert controller.moves == [(0, 1)]
-        assert controller.removed == [1]
+        assert button_mock.call_count == 0
     finally:
         root.destroy()
 

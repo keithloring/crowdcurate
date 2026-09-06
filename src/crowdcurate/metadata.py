@@ -11,7 +11,7 @@ from tkinter import font as tkfont
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any, cast
 
-import piexif  # type: ignore[import-untyped]
+import piexif
 from PIL import Image
 
 # Configure logging for errors

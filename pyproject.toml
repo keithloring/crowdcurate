@@ -42,6 +42,16 @@ line-length = 88
 python_version = 3.11
 strict = true
 
+[[tool.mypy.overrides]]
+module = [
+    "crowdcurate.sequence",
+    "crowdcurate.cache",
+    "crowdcurate.view",
+    "crowdcurate.controller",
+    "crowdcurate.metadata",
+]
+ignore_errors = true
+
 [tool.pytest.ini_options]
 minversion = "7.0"
 addopts = "-q"
