@@ -44,8 +44,8 @@ def main(argv: list[str] | None = None) -> int:
     directories = [Path(path).expanduser() for path in args.directories]
     deck = SlideDeck(directories)
     view = SlideshowView(title=args.title)
-    view_path = inspect.getsourcefile(SlideshowView) or '<unknown>'
-    print(f'Using SlideshowView implementation from: {view_path}')
+    view_path = inspect.getsourcefile(SlideshowView) or "<unknown>"
+    print(f"Using SlideshowView implementation from: {view_path}")
     controller = SlideshowController(deck, view, args.interval)
     view.root.after(100, controller.show_current)
     view.run()

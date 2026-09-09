@@ -462,7 +462,9 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
         except Exception:  # pylint: disable=broad-except
             logger.debug("XMP is optional, skipping failed load", exc_info=True)
 
-    def _extract_xmp_from_jpeg(self) -> str:  # pylint: disable=too-many-branches,too-many-nested-blocks  # noqa: C901
+    def _extract_xmp_from_jpeg(
+        self,
+    ) -> str:  # pylint: disable=too-many-branches,too-many-nested-blocks  # noqa: C901
         """Extract XMP data from JPEG APP1 marker."""
         try:
             with open(self.file_path, "rb") as f:

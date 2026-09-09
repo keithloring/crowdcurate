@@ -34,7 +34,11 @@ class Sequence:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "Sequence":
         items = [Path(p) for p in data.get("items", [])]
-        return cls(name=data.get("name", "Unnamed"), items=items, created_at=data.get("created_at"))
+        return cls(
+            name=data.get("name", "Unnamed"),
+            items=items,
+            created_at=data.get("created_at"),
+        )
 
 
 class SequenceStore:
@@ -113,23 +117,37 @@ class SequencePanel:
     def _create_widgets(self) -> None:
         toolbar = ttk.Frame(self.frame)
         toolbar.pack(fill="x", pady=(4, 4))
-        ttk.Label(toolbar, text="Sequence Editor", font=("Segoe UI", 10, "bold")).pack(side="left")
-        ttk.Button(toolbar, text="Export MP4", command=self._export_sequence_video).pack(side="right")
-        ttk.Button(toolbar, text="Audio", command=self._on_audio_select).pack(side="right")
+        ttk.Label(toolbar, text="Sequence Editor", font=("Segoe UI", 10, "bold")).pack(
+            side="left"
+        )
+        ttk.Button(
+            toolbar, text="Export MP4", command=self._export_sequence_video
+        ).pack(side="right")
+        ttk.Button(toolbar, text="Audio", command=self._on_audio_select).pack(
+            side="right"
+        )
         ttk.Button(toolbar, text="New", command=self._new_sequence).pack(side="right")
-        ttk.Button(toolbar, text="Save", command=self._save_sequence).pack(side="right", padx=4)
-        ttk.Button(toolbar, text="Clear", command=self._clear_sequence).pack(side="right", padx=4)
+        ttk.Button(toolbar, text="Save", command=self._save_sequence).pack(
+            side="right", padx=4
+        )
+        ttk.Button(toolbar, text="Clear", command=self._clear_sequence).pack(
+            side="right", padx=4
+        )
 
         ttk.Label(self.frame, text="Source Images").pack(fill="x")
         self._source_canvas = tk.Canvas(self.frame, height=100)
-        src_scroll = ttk.Scrollbar(self.frame, orient="horizontal", command=self._source_canvas.xview)
+        src_scroll = ttk.Scrollbar(
+            self.frame, orient="horizontal", command=self._source_canvas.xview
+        )
         self._source_canvas.configure(xscrollcommand=src_scroll.set)
         self._source_canvas.pack(fill="x", expand=True)
         src_scroll.pack(fill="x")
 
         ttk.Label(self.frame, text="Sequence").pack(fill="x", pady=(6, 0))
         self._sequence_canvas = tk.Canvas(self.frame, height=120)
-        seq_scroll = ttk.Scrollbar(self.frame, orient="horizontal", command=self._sequence_canvas.xview)
+        seq_scroll = ttk.Scrollbar(
+            self.frame, orient="horizontal", command=self._sequence_canvas.xview
+        )
         self._sequence_canvas.configure(xscrollcommand=seq_scroll.set)
         self._sequence_canvas.pack(fill="x", expand=True)
         seq_scroll.pack(fill="x")
@@ -170,7 +188,9 @@ class SequencePanel:
             except Exception:
                 pass
 
-    def _load_photo(self, source: Path | SlideItem, max_size: tuple[int, int]) -> ImageTk.PhotoImage | None:
+    def _load_photo(
+        self, source: Path | SlideItem, max_size: tuple[int, int]
+    ) -> ImageTk.PhotoImage | None:
         path = source.source if isinstance(source, SlideItem) else source
         thumbnail_cache = getattr(self.controller, "thumbnail_cache", None)
         if thumbnail_cache is not None:
@@ -264,21 +284,36 @@ class SequencePanel:
                 highlightbackground="#fef3c7" if is_selected else "white",
                 highlightcolor="#fef3c7" if is_selected else "white",
             )
-        if self._source_canvas is not None and selected_key != self._last_source_selection_key:
+        if (
+            self._source_canvas is not None
+            and selected_key != self._last_source_selection_key
+        ):
             self._source_canvas.after_idle(self._scroll_source_selection_into_view)
         self._last_source_selection_key = selected_key
 
     def _select_source_slide(self, slide: SlideItem) -> None:
         if self.controller is None:
             return
-        slides = self.controller.get_source_slides() if hasattr(self.controller, "get_source_slides") else []
-        target_key = str(slide.source.resolve()) if slide.source.exists() else str(slide.source)
+        slides = (
+            self.controller.get_source_slides()
+            if hasattr(self.controller, "get_source_slides")
+            else []
+        )
+        target_key = (
+            str(slide.source.resolve()) if slide.source.exists() else str(slide.source)
+        )
         for idx, source_slide in enumerate(slides):
-            source_key = str(source_slide.source.resolve()) if source_slide.source.exists() else str(source_slide.source)
+            source_key = (
+                str(source_slide.source.resolve())
+                if source_slide.source.exists()
+                else str(source_slide.source)
+            )
             if source_key == target_key:
                 if hasattr(self.controller, "jump_to"):
                     self.controller.jump_to(idx)
-                elif hasattr(self.controller, "deck") and hasattr(self.controller.deck, "jump_to"):
+                elif hasattr(self.controller, "deck") and hasattr(
+                    self.controller.deck, "jump_to"
+                ):
                     self.controller.deck.jump_to(idx)
                 break
         self._update_source_selection_state()
@@ -290,7 +325,11 @@ class SequencePanel:
             return
         old_scroll = self._source_canvas.xview()[0]
         previous_key = self._last_source_selection_key or self._current_source_key()
-        slides = self.controller.get_source_slides() if hasattr(self.controller, "get_source_slides") else []
+        slides = (
+            self.controller.get_source_slides()
+            if hasattr(self.controller, "get_source_slides")
+            else []
+        )
         slides_sorted = sorted(slides, key=lambda s: s.source.name.lower())
         self._source_canvas.delete("all")
         self._source_widgets.clear()
@@ -301,17 +340,27 @@ class SequencePanel:
         h = 80
         for slide in slides_sorted:
             photo = self._load_photo(slide, (120, h))
-            lbl = tk.Label(self._source_canvas, image=photo, bg='white', bd=0, highlightthickness=0, relief='flat', padx=2, pady=2)
+            lbl = tk.Label(
+                self._source_canvas,
+                image=photo,
+                bg="white",
+                bd=0,
+                highlightthickness=0,
+                relief="flat",
+                padx=2,
+                pady=2,
+            )
             if photo is not None:
                 self._source_photos.append(photo)
-            window_id = self._source_canvas.create_window(x, 4, anchor='nw', window=lbl)
+            window_id = self._source_canvas.create_window(x, 4, anchor="nw", window=lbl)
             try:
                 path_key = str(slide.source.resolve())
             except Exception:
                 path_key = str(slide.source)
             self._source_widgets[path_key] = lbl
             self._source_widget_ids[path_key] = window_id
-            if hasattr(self.controller, 'thumbnail_cache'):
+            if hasattr(self.controller, "thumbnail_cache"):
+
                 def make_on_ready(widget):
                     def _on_ready(p, ph):
                         try:
@@ -319,15 +368,19 @@ class SequencePanel:
                             widget.image = ph
                         except Exception:
                             pass
+
                     return _on_ready
+
                 self.controller.thumbnail_cache.get_photo(
                     slide.source,
                     max_size=(120, h),
                     on_ready=make_on_ready(lbl),
                 )
+
             def _on_source_click(event, s=slide):
                 self._pending_drag_source = s
                 self._select_source_slide(s)
+
             lbl.bind("<ButtonPress-1>", _on_source_click)
             lbl.bind("<B1-Motion>", self._on_drag_motion)
             lbl.bind("<ButtonRelease-1>", self._end_drag)
@@ -376,11 +429,12 @@ class SequencePanel:
             except Exception:
                 photo = None
             frame = ttk.Frame(self._sequence_canvas)
-            lbl = tk.Label(frame, image=photo, bg='white', bd=0, highlightthickness=0)
+            lbl = tk.Label(frame, image=photo, bg="white", bd=0, highlightthickness=0)
             if photo is not None:
                 self._sequence_photos.append(photo)
             lbl.pack()
-            if hasattr(self.controller, 'thumbnail_cache'):
+            if hasattr(self.controller, "thumbnail_cache"):
+
                 def make_on_ready(widget):
                     def _on_ready(p, ph):
                         try:
@@ -388,17 +442,23 @@ class SequencePanel:
                             widget.image = ph
                         except Exception:
                             pass
+
                     return _on_ready
+
                 self.controller.thumbnail_cache.get_photo(
                     path,
                     max_size=(120, 80),
                     on_ready=make_on_ready(lbl),
                 )
-            self._sequence_canvas.create_window(x, 4, anchor='nw', window=frame)
-            frame.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
+            self._sequence_canvas.create_window(x, 4, anchor="nw", window=frame)
+            frame.bind(
+                "<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i)
+            )
             frame.bind("<B1-Motion>", self._on_drag_motion)
             frame.bind("<ButtonRelease-1>", self._end_drag)
-            lbl.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
+            lbl.bind(
+                "<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i)
+            )
             lbl.bind("<B1-Motion>", self._on_drag_motion)
             lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += slot_w
@@ -413,16 +473,27 @@ class SequencePanel:
     def _on_audio_select(self) -> None:
         audio_files = filedialog.askopenfilenames(
             title="Select Audio Files",
-            filetypes=[("Audio files", "*.mp3 *.wav"), ("MP3 files", "*.mp3"), ("WAV files", "*.wav"), ("All files", "*.*")],
+            filetypes=[
+                ("Audio files", "*.mp3 *.wav"),
+                ("MP3 files", "*.mp3"),
+                ("WAV files", "*.wav"),
+                ("All files", "*.*"),
+            ],
             parent=self.parent,
         )
         if audio_files:
             self._audio_files = [Path(f) for f in audio_files]
             file_list = ", ".join(Path(f).name for f in audio_files)
-            messagebox.showinfo("Audio Selected", f"Selected {len(audio_files)} file(s):\n{file_list}", parent=self.parent)
+            messagebox.showinfo(
+                "Audio Selected",
+                f"Selected {len(audio_files)} file(s):\n{file_list}",
+                parent=self.parent,
+            )
 
     def _new_sequence(self) -> None:
-        name = simpledialog.askstring("New Sequence", "Sequence name:", parent=self.parent)
+        name = simpledialog.askstring(
+            "New Sequence", "Sequence name:", parent=self.parent
+        )
         if not name:
             return
         seq = Sequence(name=name, items=[])
@@ -431,19 +502,34 @@ class SequencePanel:
         self.refresh()
 
     def _save_sequence(self) -> None:
-        if not hasattr(self.controller, "current_sequence") or self.controller.current_sequence is None:
-            messagebox.showinfo("Save sequence", "No sequence to save.", parent=self.parent)
+        if (
+            not hasattr(self.controller, "current_sequence")
+            or self.controller.current_sequence is None
+        ):
+            messagebox.showinfo(
+                "Save sequence", "No sequence to save.", parent=self.parent
+            )
             return
-        name = simpledialog.askstring("Save Sequence", "Sequence name:", initialvalue=self.controller.current_sequence.name, parent=self.parent)
+        name = simpledialog.askstring(
+            "Save Sequence",
+            "Sequence name:",
+            initialvalue=self.controller.current_sequence.name,
+            parent=self.parent,
+        )
         if not name:
             return
         self.controller.current_sequence.name = name
         if hasattr(self.controller, "sequence_store"):
             path = self.controller.sequence_store.save(self.controller.current_sequence)
-            messagebox.showinfo("Saved", f"Sequence saved to: {path}", parent=self.parent)
+            messagebox.showinfo(
+                "Saved", f"Sequence saved to: {path}", parent=self.parent
+            )
 
     def _clear_sequence(self) -> None:
-        if hasattr(self.controller, "current_sequence") and self.controller.current_sequence is not None:
+        if (
+            hasattr(self.controller, "current_sequence")
+            and self.controller.current_sequence is not None
+        ):
             self.controller.current_sequence.items.clear()
             self.refresh()
 
@@ -471,7 +557,9 @@ class SequencePanel:
             pass
         return 0.0
 
-    def _process_audio_track(self, audio_files: list[Path], video_duration: float, temp_dir: Path) -> Path | None:
+    def _process_audio_track(
+        self, audio_files: list[Path], video_duration: float, temp_dir: Path
+    ) -> Path | None:
         """Process audio files: concatenate, loop to match video length, and add fade in/out."""
         if not audio_files or video_duration <= 0:
             return None
@@ -498,7 +586,9 @@ class SequencePanel:
                 "9",
                 str(concatenated_audio),
             ]
-            result = subprocess.run(concat_cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(
+                concat_cmd, capture_output=True, text=True, timeout=120
+            )
             if result.returncode != 0:
                 return None
 
@@ -532,7 +622,9 @@ class SequencePanel:
                 "128k",
                 str(processed_audio),
             ]
-            result = subprocess.run(process_cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(
+                process_cmd, capture_output=True, text=True, timeout=120
+            )
             if result.returncode == 0 and processed_audio.exists():
                 return processed_audio
         except Exception:
@@ -557,7 +649,11 @@ class SequencePanel:
         try:
             subprocess.Popen(["vlc", str(path)])
         except FileNotFoundError:
-            messagebox.showerror("Play video", "VLC is not installed or not available on PATH.", parent=self.parent)
+            messagebox.showerror(
+                "Play video",
+                "VLC is not installed or not available on PATH.",
+                parent=self.parent,
+            )
 
     def _show_ffmpeg_status_dialog(self, total_frames: int) -> tk.Toplevel:
         dialog = tk.Toplevel(self.parent)
@@ -571,7 +667,9 @@ class SequencePanel:
 
         header_row = ttk.Frame(dialog)
         header_row.pack(fill="x", padx=12, pady=(12, 6))
-        ttk.Label(header_row, text="Exporting sequence to MP4", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(
+            header_row, text="Exporting sequence to MP4", font=("Segoe UI", 10, "bold")
+        ).pack(side="left")
 
         button_row = ttk.Frame(dialog)
         button_row.pack(fill="x", padx=12, pady=(0, 8))
@@ -582,7 +680,9 @@ class SequencePanel:
 
         ttk.Label(dialog, textvariable=status_var).pack(anchor="w", padx=12)
 
-        progress = ttk.Progressbar(dialog, orient="horizontal", mode="determinate", maximum=100, value=0)
+        progress = ttk.Progressbar(
+            dialog, orient="horizontal", mode="determinate", maximum=100, value=0
+        )
         progress.pack(fill="x", padx=12, pady=(8, 12))
 
         text = tk.Text(dialog, wrap="word", height=12, state="disabled", bg="#f8f8f8")
@@ -611,10 +711,22 @@ class SequencePanel:
         text_widget.see("end")
         text_widget.configure(state="disabled")
 
-    def _combine_export_progress(self, ffmpeg_progress_percent: float, ffmpeg_phase_start_percent: float) -> float:
-        return max(0.0, min(100.0, ffmpeg_phase_start_percent + (ffmpeg_progress_percent / 100.0) * (100.0 - ffmpeg_phase_start_percent)))
+    def _combine_export_progress(
+        self, ffmpeg_progress_percent: float, ffmpeg_phase_start_percent: float
+    ) -> float:
+        return max(
+            0.0,
+            min(
+                100.0,
+                ffmpeg_phase_start_percent
+                + (ffmpeg_progress_percent / 100.0)
+                * (100.0 - ffmpeg_phase_start_percent),
+            ),
+        )
 
-    def _set_export_progress(self, dialog: tk.Toplevel, percent: float, status: str | None = None) -> None:
+    def _set_export_progress(
+        self, dialog: tk.Toplevel, percent: float, status: str | None = None
+    ) -> None:
         if not dialog.winfo_exists():
             return
         dialog.progress_bar["maximum"] = 100
@@ -622,7 +734,9 @@ class SequencePanel:
         if status is not None:
             dialog.status_var.set(status)
 
-    def _update_ffmpeg_progress(self, dialog: tk.Toplevel, progress_value: float) -> None:
+    def _update_ffmpeg_progress(
+        self, dialog: tk.Toplevel, progress_value: float
+    ) -> None:
         if not dialog.winfo_exists():
             return
         combined = self._combine_export_progress(progress_value, 80.0)
@@ -630,7 +744,9 @@ class SequencePanel:
         dialog.progress_bar["value"] = min(99.9, max(0, combined))
         dialog.status_var.set(f"{combined:.1f}% complete")
 
-    def _cancel_ffmpeg_process(self, dialog: tk.Toplevel, process: subprocess.Popen[str] | None) -> None:
+    def _cancel_ffmpeg_process(
+        self, dialog: tk.Toplevel, process: subprocess.Popen[str] | None
+    ) -> None:
         if dialog._cancel_requested:
             return
         dialog._cancel_requested = True
@@ -678,18 +794,35 @@ class SequencePanel:
             dialog.cancel_button.configure(text="Close")
             dialog.cancel_button.configure(command=dialog.destroy)
             dialog.cancel_button.configure(state="normal")
-            dialog.play_button.configure(state="normal", command=lambda: self._play_exported_video(output_path))
-            messagebox.showinfo("Export complete", f"Video saved to: {output_path}", parent=self.parent)
+            dialog.play_button.configure(
+                state="normal", command=lambda: self._play_exported_video(output_path)
+            )
+            messagebox.showinfo(
+                "Export complete", f"Video saved to: {output_path}", parent=self.parent
+            )
         else:
-            self._set_export_progress(dialog, 0.0, f"Export failed (exit code {return_code})")
+            self._set_export_progress(
+                dialog, 0.0, f"Export failed (exit code {return_code})"
+            )
             dialog.cancel_button.configure(text="Close")
             dialog.cancel_button.configure(command=dialog.destroy)
             dialog.cancel_button.configure(state="normal")
             dialog.play_button.configure(state="disabled")
-            messagebox.showerror("Export video", f"ffmpeg failed while exporting the video to {output_path}.", parent=self.parent)
+            messagebox.showerror(
+                "Export video",
+                f"ffmpeg failed while exporting the video to {output_path}.",
+                parent=self.parent,
+            )
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-    def _read_ffmpeg_output(self, process: subprocess.Popen[str], dialog: tk.Toplevel, total_frames: int, output_path: Path, temp_dir: Path) -> None:
+    def _read_ffmpeg_output(
+        self,
+        process: subprocess.Popen[str],
+        dialog: tk.Toplevel,
+        total_frames: int,
+        output_path: Path,
+        temp_dir: Path,
+    ) -> None:
         try:
             if process.stdout is not None:
                 for raw_line in iter(process.stdout.readline, ""):
@@ -699,18 +832,26 @@ class SequencePanel:
                     dialog.after(0, self._append_ffmpeg_output, dialog, line)
                     progress_value = self._parse_ffmpeg_progress(line, total_frames)
                     if progress_value is not None:
-                        dialog.after(0, self._update_ffmpeg_progress, dialog, progress_value)
+                        dialog.after(
+                            0, self._update_ffmpeg_progress, dialog, progress_value
+                        )
             process.wait()
-            dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)
+            dialog.after(
+                0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir
+            )
         except Exception:
-            dialog.after(0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir)
+            dialog.after(
+                0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir
+            )
 
     def _export_sequence_video(self) -> None:
         if self.controller is None:
             return
         seq = getattr(self.controller, "current_sequence", None)
         if seq is None or not seq.items:
-            messagebox.showinfo("Export video", "No sequence items to export.", parent=self.parent)
+            messagebox.showinfo(
+                "Export video", "No sequence items to export.", parent=self.parent
+            )
             return
 
         output_path = filedialog.asksaveasfilename(
@@ -729,7 +870,9 @@ class SequencePanel:
         dialog = self._show_ffmpeg_status_dialog(total_frames=max(1, len(seq.items)))
         self._set_export_progress(dialog, 0.0, "Preparing MP4 export...")
         self._append_ffmpeg_output(dialog, "Preparing MP4 export...")
-        self._append_ffmpeg_output(dialog, f"Processing {len(seq.items)} sequence items.")
+        self._append_ffmpeg_output(
+            dialog, f"Processing {len(seq.items)} sequence items."
+        )
         self._append_ffmpeg_output(dialog, "Generating source frames...")
         dialog.update_idletasks()
 
@@ -753,14 +896,18 @@ class SequencePanel:
                             new_width = frame_size[0]
                             new_height = max(1, int(frame_size[0] / aspect_ratio))
                             offset_y = (frame_size[1] - new_height) // 2
-                            resized = rgb_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                            resized = rgb_img.resize(
+                                (new_width, new_height), Image.Resampling.LANCZOS
+                            )
                             canvas = Image.new("RGB", frame_size, (0, 0, 0))
                             canvas.paste(resized, (0, offset_y))
                         else:
                             new_height = frame_size[1]
                             new_width = max(1, int(frame_size[1] * aspect_ratio))
                             offset_x = (frame_size[0] - new_width) // 2
-                            resized = rgb_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                            resized = rgb_img.resize(
+                                (new_width, new_height), Image.Resampling.LANCZOS
+                            )
                             canvas = Image.new("RGB", frame_size, (0, 0, 0))
                             canvas.paste(resized, (offset_x, 0))
 
@@ -768,18 +915,27 @@ class SequencePanel:
                         canvas.save(frame_path, format="PNG")
                         frame_paths.append(frame_path)
                     source_progress = (index / source_total) * 30.0
-                    self._set_export_progress(dialog, source_progress, "Generating source frames...")
+                    self._set_export_progress(
+                        dialog, source_progress, "Generating source frames..."
+                    )
                     dialog.update_idletasks()
                 except Exception:
                     continue
 
             if not frame_paths:
                 dialog.destroy()
-                messagebox.showerror("Export video", "No valid image frames were found to export.", parent=self.parent)
+                messagebox.showerror(
+                    "Export video",
+                    "No valid image frames were found to export.",
+                    parent=self.parent,
+                )
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 return
 
-            self._append_ffmpeg_output(dialog, f"Built {len(frame_paths)} source frames; preparing fades and export list...")
+            self._append_ffmpeg_output(
+                dialog,
+                f"Built {len(frame_paths)} source frames; preparing fades and export list...",
+            )
             self._set_export_progress(dialog, 35.0, "Preparing ffmpeg export...")
             dialog.update_idletasks()
 
@@ -823,17 +979,28 @@ class SequencePanel:
                 if fade_paths:
                     fh.write(f"file '{fade_paths[-1].as_posix()}'\n")
 
-            video_duration = len(frame_paths) * (2.0 + fade_steps * step_duration + step_duration)
+            video_duration = len(frame_paths) * (
+                2.0 + fade_steps * step_duration + step_duration
+            )
             audio_track = None
             if self._audio_files:
                 self._set_export_progress(dialog, 75.0, "Processing audio...")
-                self._append_ffmpeg_output(dialog, f"Processing {len(self._audio_files)} audio file(s)...")
+                self._append_ffmpeg_output(
+                    dialog, f"Processing {len(self._audio_files)} audio file(s)..."
+                )
                 dialog.update_idletasks()
-                audio_track = self._process_audio_track(self._audio_files, video_duration, temp_dir)
+                audio_track = self._process_audio_track(
+                    self._audio_files, video_duration, temp_dir
+                )
                 if audio_track:
-                    self._append_ffmpeg_output(dialog, f"Audio processed: {audio_track.name}")
+                    self._append_ffmpeg_output(
+                        dialog, f"Audio processed: {audio_track.name}"
+                    )
                 else:
-                    self._append_ffmpeg_output(dialog, "Warning: Audio processing failed, continuing without audio")
+                    self._append_ffmpeg_output(
+                        dialog,
+                        "Warning: Audio processing failed, continuing without audio",
+                    )
 
             ffmpeg_cmd = [
                 "ffmpeg",
@@ -849,12 +1016,14 @@ class SequencePanel:
             if audio_track:
                 ffmpeg_cmd.extend(["-i", str(audio_track)])
 
-            ffmpeg_cmd.extend([
-                "-c:v",
-                "libx264",
-                "-pix_fmt",
-                "yuv420p",
-            ])
+            ffmpeg_cmd.extend(
+                [
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                ]
+            )
 
             if audio_track:
                 ffmpeg_cmd.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
@@ -863,9 +1032,15 @@ class SequencePanel:
 
             self._set_export_progress(dialog, 80.0, "Launching ffmpeg...")
             self._append_ffmpeg_output(dialog, "Encoding MP4 with ffmpeg...")
-            self._append_ffmpeg_output(dialog, f"ffmpeg command: {' '.join(ffmpeg_cmd)}")
-            dialog.cancel_button.configure(command=lambda: self._cancel_ffmpeg_process(dialog, dialog._process))
-            dialog.play_button.configure(command=lambda: self._play_exported_video(output_path))
+            self._append_ffmpeg_output(
+                dialog, f"ffmpeg command: {' '.join(ffmpeg_cmd)}"
+            )
+            dialog.cancel_button.configure(
+                command=lambda: self._cancel_ffmpeg_process(dialog, dialog._process)
+            )
+            dialog.play_button.configure(
+                command=lambda: self._play_exported_video(output_path)
+            )
             try:
                 process = subprocess.Popen(
                     ffmpeg_cmd,
@@ -876,16 +1051,31 @@ class SequencePanel:
                 )
             except FileNotFoundError:
                 dialog.destroy()
-                messagebox.showerror("Export video", "ffmpeg is not installed or not available on PATH.", parent=self.parent)
+                messagebox.showerror(
+                    "Export video",
+                    "ffmpeg is not installed or not available on PATH.",
+                    parent=self.parent,
+                )
                 shutil.rmtree(temp_dir, ignore_errors=True)
                 return
 
             dialog._process = process
-            threading.Thread(target=self._read_ffmpeg_output, args=(process, dialog, max(1, len(fade_paths)), output_path, temp_dir), daemon=True).start()
-            dialog.protocol("WM_DELETE_WINDOW", lambda: self._cancel_ffmpeg_process(dialog, dialog._process))
+            threading.Thread(
+                target=self._read_ffmpeg_output,
+                args=(process, dialog, max(1, len(fade_paths)), output_path, temp_dir),
+                daemon=True,
+            ).start()
+            dialog.protocol(
+                "WM_DELETE_WINDOW",
+                lambda: self._cancel_ffmpeg_process(dialog, dialog._process),
+            )
         except Exception:
             shutil.rmtree(temp_dir, ignore_errors=True)
-            messagebox.showerror("Export video", f"ffmpeg failed while exporting the video to {output_path}.", parent=self.parent)
+            messagebox.showerror(
+                "Export video",
+                f"ffmpeg failed while exporting the video to {output_path}.",
+                parent=self.parent,
+            )
 
     # DnD handlers
     def _start_drag_source(self, event: tk.Event, slide: SlideItem) -> None:
@@ -967,7 +1157,9 @@ class SequencePanel:
         if seq is None:
             return 0
         try:
-            canvas_x = self._sequence_canvas.canvasx(event.x_root - self._sequence_canvas.winfo_rootx())
+            canvas_x = self._sequence_canvas.canvasx(
+                event.x_root - self._sequence_canvas.winfo_rootx()
+            )
         except Exception:
             canvas_x = 0.0
 
@@ -1004,14 +1196,24 @@ class SequencePanel:
         insertion_points.append(4 + item_count * slot_w + 5.0)
 
         try:
-            canvas_x = self._sequence_canvas.canvasx(event.x_root - self._sequence_canvas.winfo_rootx())
+            canvas_x = self._sequence_canvas.canvasx(
+                event.x_root - self._sequence_canvas.winfo_rootx()
+            )
         except Exception:
             canvas_x = 0.0
 
-        x = insertion_points[min(range(len(insertion_points)), key=lambda idx: abs(insertion_points[idx] - canvas_x))]
+        x = insertion_points[
+            min(
+                range(len(insertion_points)),
+                key=lambda idx: abs(insertion_points[idx] - canvas_x),
+            )
+        ]
         if self._sequence_drop_cursor_id is None:
             self._sequence_drop_cursor_id = self._sequence_canvas.create_line(
-                x, 0, x, 120,
+                x,
+                0,
+                x,
+                120,
                 fill="#ef4444",
                 width=2,
                 dash=(4, 2),
@@ -1021,7 +1223,10 @@ class SequencePanel:
         self._sequence_canvas.tag_raise(self._sequence_drop_cursor_id)
 
     def _hide_sequence_drop_cursor(self) -> None:
-        if self._sequence_canvas is not None and self._sequence_drop_cursor_id is not None:
+        if (
+            self._sequence_canvas is not None
+            and self._sequence_drop_cursor_id is not None
+        ):
             try:
                 self._sequence_canvas.delete(self._sequence_drop_cursor_id)
             except tk.TclError:
@@ -1043,10 +1248,17 @@ class SequencePanel:
     def _update_source_trash_cursor(self, event: tk.Event) -> None:
         if self._source_canvas is None:
             return
-        if not self._dragging or self._drag_from_index is None or not self._is_event_in_source_panel(event):
+        if (
+            not self._dragging
+            or self._drag_from_index is None
+            or not self._is_event_in_source_panel(event)
+        ):
             self._hide_source_trash_cursor()
             return
-        x = min(max(event.x_root - self._source_canvas.winfo_rootx(), 18), self._source_canvas.winfo_width() - 18)
+        x = min(
+            max(event.x_root - self._source_canvas.winfo_rootx(), 18),
+            self._source_canvas.winfo_width() - 18,
+        )
         y = max(46, min(56, self._source_canvas.winfo_height() // 2))
         if self._source_trash_cursor_id is None:
             self._source_trash_cursor_id = self._source_canvas.create_text(
@@ -1117,15 +1329,29 @@ class SequencePanel:
             if canvas is not None:
                 canvas_x = canvas.canvasx(event.x_root - canvas.winfo_rootx())
                 slot_w = 140
-                drop_index = max(0, min(len(getattr(self.controller, "current_sequence", None).items or []), int((canvas_x - 4) // slot_w)))
+                drop_index = max(
+                    0,
+                    min(
+                        len(
+                            getattr(self.controller, "current_sequence", None).items
+                            or []
+                        ),
+                        int((canvas_x - 4) // slot_w),
+                    ),
+                )
         except Exception:
             drop_index = 0
         # if came from source
         if self._drag_from_index is None and self._drag_source_path is not None:
-            if not hasattr(self.controller, "current_sequence") or self.controller.current_sequence is None:
+            if (
+                not hasattr(self.controller, "current_sequence")
+                or self.controller.current_sequence is None
+            ):
                 self.controller.current_sequence = Sequence(name="Untitled", items=[])
             if not self._is_event_in_source_panel(event):
-                self.controller.current_sequence.items.insert(drop_index, self._drag_source_path)
+                self.controller.current_sequence.items.insert(
+                    drop_index, self._drag_source_path
+                )
         elif self._drag_from_index is not None:
             # reorder within sequence or remove the dragged item when dropped over the source panel
             seq = getattr(self.controller, "current_sequence", None)

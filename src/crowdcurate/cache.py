@@ -53,7 +53,12 @@ class ThumbnailCache:
     `on_ready(path, photo)` on the Tk main thread when available.
     """
 
-    def __init__(self, root: tk.Misc | None = None, max_workers: int = 4, placeholder_size=(120, 80)) -> None:
+    def __init__(
+        self,
+        root: tk.Misc | None = None,
+        max_workers: int = 4,
+        placeholder_size=(120, 80),
+    ) -> None:
         import queue
         import threading
         from concurrent.futures import ThreadPoolExecutor
@@ -64,7 +69,11 @@ class ThumbnailCache:
         self._pending_callbacks: dict[str, list[object]] = {}
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=max_workers)
-        self._queue: queue.Queue[tuple[str, Path, Image.Image | None, ImageTk.PhotoImage | None, object | None]] = queue.Queue()
+        self._queue: queue.Queue[
+            tuple[
+                str, Path, Image.Image | None, ImageTk.PhotoImage | None, object | None
+            ]
+        ] = queue.Queue()
         self._queue_flush_scheduled = False
         self._placeholder = Image.new("RGB", placeholder_size, (220, 220, 220))
         self._placeholder_cache: dict[str, ImageTk.PhotoImage] = {}
@@ -78,7 +87,11 @@ class ThumbnailCache:
             return None
 
     def _schedule_queue_flush(self) -> None:
-        if self.root is None or not self.root.winfo_exists() or self._queue_flush_scheduled:
+        if (
+            self.root is None
+            or not self.root.winfo_exists()
+            or self._queue_flush_scheduled
+        ):
             return
         self._queue_flush_scheduled = True
         try:
@@ -113,7 +126,11 @@ class ThumbnailCache:
                     callback(path, photo)
                 except Exception:
                     pass
-        if not self._queue.empty() and self.root is not None and self.root.winfo_exists():
+        if (
+            not self._queue.empty()
+            and self.root is not None
+            and self.root.winfo_exists()
+        ):
             self._schedule_queue_flush()
 
     def shutdown(self) -> None:
@@ -122,7 +139,9 @@ class ThumbnailCache:
         except Exception:
             pass
 
-    def get_photo(self, path: Path, max_size=(120, 80), on_ready=None) -> ImageTk.PhotoImage | None:
+    def get_photo(
+        self, path: Path, max_size=(120, 80), on_ready=None
+    ) -> ImageTk.PhotoImage | None:
         key = str(path)
         with self._lock:
             if key in self._cache:
@@ -148,7 +167,9 @@ class ThumbnailCache:
         self._executor.submit(_load)
         return placeholder
 
-    def get_thumbnail(self, slide: "SlideItem", max_size: tuple[int, int] = (160, 160)) -> "Image.Image":
+    def get_thumbnail(
+        self, slide: "SlideItem", max_size: tuple[int, int] = (160, 160)
+    ) -> "Image.Image":
         try:
             img = Image.open(slide.source)
             img.thumbnail(max_size, Image.Resampling.LANCZOS)

@@ -36,10 +36,10 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class ImageResult:
@@ -56,13 +56,12 @@ class ImageResult:
 # Database
 # ---------------------------------------------------------------------------
 
+
 def open_database(db_path: Path) -> sqlite3.Connection:
     """Open digiKam database read-only."""
 
     if not db_path.is_file():
-        raise FileNotFoundError(
-            f"Database not found: {db_path}"
-        )
+        raise FileNotFoundError(f"Database not found: {db_path}")
 
     uri = f"file:{db_path}?mode=ro"
 
@@ -76,23 +75,19 @@ def open_database(db_path: Path) -> sqlite3.Connection:
 # digiKam tags
 # ---------------------------------------------------------------------------
 
+
 def load_tags(
     connection: sqlite3.Connection,
 ) -> list[tuple[int, str]]:
     """Return (tag_id, full_hierarchical_path)."""
 
-    rows = connection.execute(
-        """
+    rows = connection.execute("""
         SELECT id, pid, name
         FROM Tags
         ORDER BY pid, name
-        """
-    ).fetchall()
+        """).fetchall()
 
-    tags_by_id = {
-        int(row["id"]): row
-        for row in rows
-    }
+    tags_by_id = {int(row["id"]): row for row in rows}
 
     def make_path(tag_id: int) -> str:
         parts: list[str] = []
@@ -101,9 +96,7 @@ def load_tags(
 
         while current and current in tags_by_id:
             if current in seen:
-                raise RuntimeError(
-                    f"Cycle in digiKam tag hierarchy at tag {current}"
-                )
+                raise RuntimeError(f"Cycle in digiKam tag hierarchy at tag {current}")
 
             seen.add(current)
 
@@ -115,10 +108,7 @@ def load_tags(
 
         return "/".join(parts)
 
-    result = [
-        (tag_id, make_path(tag_id))
-        for tag_id in tags_by_id
-    ]
+    result = [(tag_id, make_path(tag_id)) for tag_id in tags_by_id]
 
     result.sort(key=lambda x: x[1].lower())
 
@@ -146,41 +136,31 @@ def find_matching_tag(
 
     tags = load_tags(connection)
 
-    exact = [
-        tag_id
-        for tag_id, path in tags
-        if path.casefold() == requested.casefold()
-    ]
+    exact = [tag_id for tag_id, path in tags if path.casefold() == requested.casefold()]
 
     if len(exact) == 1:
         return exact[0]
 
     if len(exact) > 1:
-        raise RuntimeError(
-            f"Multiple exact matches found for tag {requested!r}"
-        )
+        raise RuntimeError(f"Multiple exact matches found for tag {requested!r}")
 
     # If the user supplied only a leaf name, allow it if unique.
     leaf_matches = [
         tag_id
         for tag_id, path in tags
-        if path.rsplit("/", 1)[-1].casefold()
-        == requested.casefold()
+        if path.rsplit("/", 1)[-1].casefold() == requested.casefold()
     ]
 
     if len(leaf_matches) == 1:
         return leaf_matches[0]
 
     if not leaf_matches:
-        raise RuntimeError(
-            f"No digiKam tag found matching {requested!r}"
-        )
+        raise RuntimeError(f"No digiKam tag found matching {requested!r}")
 
     paths = dict(tags)
 
     message = (
-        f"Tag {requested!r} is ambiguous. "
-        "Use the complete hierarchical path:\n"
+        f"Tag {requested!r} is ambiguous. " "Use the complete hierarchical path:\n"
     )
 
     for tag_id in leaf_matches:
@@ -192,6 +172,7 @@ def find_matching_tag(
 # ---------------------------------------------------------------------------
 # Image IDs associated with tags
 # ---------------------------------------------------------------------------
+
 
 def get_image_ids_for_tag(
     connection: sqlite3.Connection,
@@ -207,53 +188,42 @@ def get_image_ids_for_tag(
         (tag_id,),
     ).fetchall()
 
-    return {
-        int(row["imageid"])
-        for row in rows
-    }
+    return {int(row["imageid"]) for row in rows}
 
 
 # ---------------------------------------------------------------------------
 # digiKam album information
 # ---------------------------------------------------------------------------
 
+
 def load_albums(
     connection: sqlite3.Connection,
 ) -> dict[int, sqlite3.Row]:
 
-    rows = connection.execute(
-        """
+    rows = connection.execute("""
         SELECT id, albumRoot, relativePath
         FROM Albums
-        """
-    ).fetchall()
+        """).fetchall()
 
-    return {
-        int(row["id"]): row
-        for row in rows
-    }
+    return {int(row["id"]): row for row in rows}
 
 
 def load_album_roots(
     connection: sqlite3.Connection,
 ) -> dict[int, sqlite3.Row]:
 
-    rows = connection.execute(
-        """
+    rows = connection.execute("""
         SELECT id, identifier, specificPath
         FROM AlbumRoots
-        """
-    ).fetchall()
+        """).fetchall()
 
-    return {
-        int(row["id"]): row
-        for row in rows
-    }
+    return {int(row["id"]): row for row in rows}
 
 
 # ---------------------------------------------------------------------------
 # Trash handling
 # ---------------------------------------------------------------------------
+
 
 def build_trash_index(
     trash_directory: Path,
@@ -335,9 +305,7 @@ def trash_candidates(
             if not candidate_name.startswith(prefix_text):
                 continue
 
-            if not candidate_name.endswith(
-                "." + extension
-            ):
+            if not candidate_name.endswith("." + extension):
                 continue
 
             for path in paths:
@@ -364,6 +332,7 @@ def trash_candidates(
 # ---------------------------------------------------------------------------
 # Resolve an image
 # ---------------------------------------------------------------------------
+
 
 def resolve_image(
     row: sqlite3.Row,
@@ -413,9 +382,7 @@ def resolve_image(
 
                         if root is not None:
 
-                            relative_path = (
-                                album["relativePath"] or ""
-                            )
+                            relative_path = album["relativePath"] or ""
 
                             # The database's AlbumRoots.specificPath
                             # is /data/scans/Documents in this case,
@@ -425,16 +392,9 @@ def resolve_image(
                             # Therefore use the directory containing
                             # digikam4.db as the actual collection root.
 
-                            relative_path = (
-                                relative_path
-                                .lstrip("/")
-                            )
+                            relative_path = relative_path.lstrip("/")
 
-                            path = (
-                                collection_root
-                                / relative_path
-                                / name
-                            )
+                            path = collection_root / relative_path / name
 
                             if path.is_file():
 
@@ -456,8 +416,7 @@ def resolve_image(
                                 status="MISSING",
                                 path=None,
                                 detail=(
-                                    "digiKam album path does not "
-                                    f"exist: {path}"
+                                    "digiKam album path does not " f"exist: {path}"
                                 ),
                             )
 
@@ -510,16 +469,14 @@ def resolve_image(
         unique_hash=unique_hash,
         status="UNRESOLVED",
         path=None,
-        detail=(
-            "album is NULL and no matching file was found "
-            "in digiKam trash"
-        ),
+        detail=("album is NULL and no matching file was found " "in digiKam trash"),
     )
 
 
 # ---------------------------------------------------------------------------
 # Symlink handling
 # ---------------------------------------------------------------------------
+
 
 def unique_destination(
     destination: Path,
@@ -535,14 +492,9 @@ def unique_destination(
 
     while True:
 
-        candidate = destination.with_name(
-            f"{stem}__{counter}{suffix}"
-        )
+        candidate = destination.with_name(f"{stem}__{counter}{suffix}")
 
-        if (
-            not candidate.exists()
-            and not candidate.is_symlink()
-        ):
+        if not candidate.exists() and not candidate.is_symlink():
             return candidate
 
         counter += 1
@@ -569,11 +521,7 @@ def create_symlinks(
         if result.status == "NORMAL":
             pass
 
-        elif (
-            result.status == "TRASH"
-            and include_trash
-            and result.path is not None
-        ):
+        elif result.status == "TRASH" and include_trash and result.path is not None:
             pass
 
         else:
@@ -590,18 +538,10 @@ def create_symlinks(
 
         original_destination = destination
 
-        if (
-            destination.exists()
-            or destination.is_symlink()
-        ):
-            destination = unique_destination(
-                destination
-            )
+        if destination.exists() or destination.is_symlink():
+            destination = unique_destination(destination)
 
-            print(
-                f"COLLISION: {original_destination.name}"
-                f" -> {destination.name}"
-            )
+            print(f"COLLISION: {original_destination.name}" f" -> {destination.name}")
 
         try:
             relative_source = os.path.relpath(
@@ -611,16 +551,11 @@ def create_symlinks(
         except ValueError:
             relative_source = str(source)
 
-        print(
-            f"LINK: {destination.name} -> "
-            f"{relative_source}"
-        )
+        print(f"LINK: {destination.name} -> " f"{relative_source}")
 
         if not dry_run:
 
-            destination.symlink_to(
-                relative_source
-            )
+            destination.symlink_to(relative_source)
 
         created += 1
 
@@ -631,6 +566,7 @@ def create_symlinks(
 # Report
 # ---------------------------------------------------------------------------
 
+
 def write_report(
     report_path: Path,
     results: list[ImageResult],
@@ -639,9 +575,7 @@ def write_report(
     counts: dict[str, int] = {}
 
     for result in results:
-        counts[result.status] = (
-            counts.get(result.status, 0) + 1
-        )
+        counts[result.status] = counts.get(result.status, 0) + 1
 
     with report_path.open(
         "w",
@@ -660,10 +594,7 @@ def write_report(
             "MISSING",
             "UNRESOLVED",
         ):
-            f.write(
-                f"{status:12}: "
-                f"{counts.get(status, 0)}\n"
-            )
+            f.write(f"{status:12}: " f"{counts.get(status, 0)}\n")
 
         f.write("\n")
 
@@ -673,11 +604,7 @@ def write_report(
             "UNRESOLVED",
         ):
 
-            matching = [
-                r
-                for r in results
-                if r.status == status
-            ]
+            matching = [r for r in results if r.status == status]
 
             if not matching:
                 continue
@@ -690,42 +617,30 @@ def write_report(
 
             for result in matching:
 
-                f.write(
-                    f"\nID:       {result.image_id}\n"
-                )
+                f.write(f"\nID:       {result.image_id}\n")
 
-                f.write(
-                    f"Filename: {result.name}\n"
-                )
+                f.write(f"Filename: {result.name}\n")
 
-                f.write(
-                    f"Size:     {result.file_size}\n"
-                )
+                f.write(f"Size:     {result.file_size}\n")
 
-                f.write(
-                    f"Hash:     {result.unique_hash}\n"
-                )
+                f.write(f"Hash:     {result.unique_hash}\n")
 
                 if result.path:
-                    f.write(
-                        f"Path:     {result.path}\n"
-                    )
+                    f.write(f"Path:     {result.path}\n")
 
-                f.write(
-                    f"Detail:   {result.detail}\n"
-                )
+                f.write(f"Detail:   {result.detail}\n")
 
 
 # ---------------------------------------------------------------------------
 # Command line
 # ---------------------------------------------------------------------------
 
+
 def parse_arguments() -> argparse.Namespace:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Create symlinks to digiKam-tagged images "
-            "without modifying digiKam."
+            "Create symlinks to digiKam-tagged images " "without modifying digiKam."
         )
     )
 
@@ -740,18 +655,13 @@ def parse_arguments() -> argparse.Namespace:
         "--tag",
         action="append",
         required=True,
-        help=(
-            "digiKam tag. Can be specified more than once."
-        ),
+        help=("digiKam tag. Can be specified more than once."),
     )
 
     parser.add_argument(
         "--all",
         action="store_true",
-        help=(
-            "With multiple --tag arguments, require "
-            "images to have ALL tags."
-        ),
+        help=("With multiple --tag arguments, require " "images to have ALL tags."),
     )
 
     parser.add_argument(
@@ -764,19 +674,13 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help=(
-            "Show what would happen without creating "
-            "directories or symlinks."
-        ),
+        help=("Show what would happen without creating " "directories or symlinks."),
     )
 
     parser.add_argument(
         "--include-trash",
         action="store_true",
-        help=(
-            "Also symlink images found in digiKam's "
-            ".dtrash/files directory."
-        ),
+        help=("Also symlink images found in digiKam's " ".dtrash/files directory."),
     )
 
     parser.add_argument(
@@ -791,6 +695,7 @@ def parse_arguments() -> argparse.Namespace:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
 
 def main() -> int:
 
@@ -807,11 +712,7 @@ def main() -> int:
 
     collection_root = db_path.parent
 
-    trash_directory = (
-        collection_root
-        / ".dtrash"
-        / "files"
-    )
+    trash_directory = collection_root / ".dtrash" / "files"
 
     print()
     print("digiKam Symlink Utility")
@@ -880,58 +781,30 @@ def main() -> int:
         ]
 
         if args.all:
-            image_ids = set.intersection(
-                *image_sets
-            )
+            image_ids = set.intersection(*image_sets)
         else:
-            image_ids = set.union(
-                *image_sets
-            )
+            image_ids = set.union(*image_sets)
 
-        print(
-            "Tags:"
-        )
+        print("Tags:")
 
         for requested, tag_id in zip(
             args.tag,
             tag_ids,
         ):
-            print(
-                f"    {requested} "
-                f"(tag ID {tag_id})"
-            )
+            print(f"    {requested} " f"(tag ID {tag_id})")
 
         print()
         print(
-            "Selection: "
-            + (
-                "ALL specified tags"
-                if args.all
-                else "ANY specified tag"
-            )
+            "Selection: " + ("ALL specified tags" if args.all else "ANY specified tag")
         )
 
-        print(
-            f"Tagged image records: {len(image_ids)}"
-        )
+        print(f"Tagged image records: {len(image_ids)}")
 
-        print(
-            f"Output directory: {args.output}"
-        )
+        print(f"Output directory: {args.output}")
 
-        print(
-            "Mode: "
-            + (
-                "DRY RUN"
-                if args.dry_run
-                else "CREATE SYMLINKS"
-            )
-        )
+        print("Mode: " + ("DRY RUN" if args.dry_run else "CREATE SYMLINKS"))
 
-        print(
-            "Include trash: "
-            + ("YES" if args.include_trash else "NO")
-        )
+        print("Include trash: " + ("YES" if args.include_trash else "NO"))
 
         print()
 
@@ -942,9 +815,7 @@ def main() -> int:
         albums = load_albums(connection)
         album_roots = load_album_roots(connection)
 
-        placeholders = ",".join(
-            "?" for _ in image_ids
-        )
+        placeholders = ",".join("?" for _ in image_ids)
 
         if not image_ids:
             print("No matching images.")
@@ -973,9 +844,7 @@ def main() -> int:
         # Build trash index
         # -----------------------------------------------------------
 
-        trash_index = build_trash_index(
-            trash_directory
-        )
+        trash_index = build_trash_index(trash_directory)
 
         print()
 
@@ -1004,9 +873,7 @@ def main() -> int:
         counts: dict[str, int] = {}
 
         for result in results:
-            counts[result.status] = (
-                counts.get(result.status, 0) + 1
-            )
+            counts[result.status] = counts.get(result.status, 0) + 1
 
         print("=" * 60)
         print("Resolution summary")
@@ -1018,10 +885,7 @@ def main() -> int:
             "MISSING",
             "UNRESOLVED",
         ):
-            print(
-                f"{status:12}: "
-                f"{counts.get(status, 0)}"
-            )
+            print(f"{status:12}: " f"{counts.get(status, 0)}")
 
         print()
 
@@ -1029,18 +893,14 @@ def main() -> int:
         # Create report
         # -----------------------------------------------------------
 
-        report_path = args.output.parent / (
-            args.output.name + "_report.txt"
-        )
+        report_path = args.output.parent / (args.output.name + "_report.txt")
 
         write_report(
             report_path,
             results,
         )
 
-        print(
-            f"Report: {report_path}"
-        )
+        print(f"Report: {report_path}")
 
         print()
 
@@ -1064,10 +924,7 @@ def main() -> int:
 
         if args.dry_run:
             print()
-            print(
-                "DRY RUN: no directories or symlinks "
-                "were created."
-            )
+            print("DRY RUN: no directories or symlinks " "were created.")
 
         return 0
 

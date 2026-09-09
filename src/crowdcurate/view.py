@@ -171,9 +171,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         )
         return max(1, width), max(1, height)
 
-    def _size_is_close(
-        self, first: tuple[int, int], second: tuple[int, int]
-    ) -> bool:
+    def _size_is_close(self, first: tuple[int, int], second: tuple[int, int]) -> bool:
         if first is None or second is None:
             return False
         width_tol = max(12, int(min(first[0], second[0]) * 0.03))
@@ -376,9 +374,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             return
 
         current = self._controller.deck.current_index + 1
-        prompt = (
-            f"Enter slide number (1-{total}, current {current}):"
-        )
+        prompt = f"Enter slide number (1-{total}, current {current}):"
         index = simpledialog.askinteger(
             "Jump to slide",
             prompt,
