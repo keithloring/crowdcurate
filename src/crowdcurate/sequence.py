@@ -102,6 +102,7 @@ class SequencePanel:
         self._drag_source_path: Path | None = None
         self._drag_from_index: int | None = None
         self._sequence_drop_cursor_id: int | None = None
+        self._source_trash_cursor_id: int | None = None
         self._sequence_scroll_pos: float = 0.0
 
         # audio files for export
@@ -966,23 +967,22 @@ class SequencePanel:
         if seq is None:
             return 0
         try:
-            rel_x = event.x_root - self._sequence_canvas.winfo_rootx()
+            canvas_x = self._sequence_canvas.canvasx(event.x_root - self._sequence_canvas.winfo_rootx())
         except Exception:
-            rel_x = 0
-        slot_w = 140
-        if not seq.items:
-            return 0
+            canvas_x = 0.0
 
-        gap_positions: list[float] = [4 + 60]
-        for idx in range(len(seq.items) - 1):
-            gap_positions.append(4 + (idx + 1) * slot_w - 10)
-        gap_positions.append(4 + len(seq.items) * slot_w + 60)
+        slot_w = 140
+        item_count = len(seq.items)
+        insertion_points = [5.0]
+        for idx in range(item_count):
+            insertion_points.append(4 + (idx + 1) * slot_w - 10.0)
+        insertion_points.append(4 + item_count * slot_w + 5.0)
 
         best_index = min(
-            range(len(gap_positions)),
-            key=lambda idx: abs(gap_positions[idx] - rel_x),
+            range(len(insertion_points)),
+            key=lambda idx: abs(insertion_points[idx] - canvas_x),
         )
-        return max(0, min(len(seq.items), best_index))
+        return max(0, min(item_count, best_index))
 
     def _update_sequence_drop_cursor(self, event: tk.Event) -> None:
         if self._sequence_canvas is None:
@@ -996,15 +996,19 @@ class SequencePanel:
             self._hide_sequence_drop_cursor()
             return
 
-        drop_index = self._sequence_drop_index_for_event(event)
         slot_w = 140
         item_count = len(seq.items)
-        if item_count == 0:
-            x = 4 + 60
-        elif drop_index >= item_count:
-            x = 4 + item_count * slot_w + 60
-        else:
-            x = 4 + drop_index * slot_w - 10
+        insertion_points = [5.0]
+        for idx in range(item_count):
+            insertion_points.append(4 + (idx + 1) * slot_w - 10.0)
+        insertion_points.append(4 + item_count * slot_w + 5.0)
+
+        try:
+            canvas_x = self._sequence_canvas.canvasx(event.x_root - self._sequence_canvas.winfo_rootx())
+        except Exception:
+            canvas_x = 0.0
+
+        x = insertion_points[min(range(len(insertion_points)), key=lambda idx: abs(insertion_points[idx] - canvas_x))]
         if self._sequence_drop_cursor_id is None:
             self._sequence_drop_cursor_id = self._sequence_canvas.create_line(
                 x, 0, x, 120,
@@ -1024,6 +1028,47 @@ class SequencePanel:
                 pass
             self._sequence_drop_cursor_id = None
 
+    def _is_event_in_source_panel(self, event: tk.Event) -> bool:
+        if self._source_canvas is None:
+            return False
+        try:
+            x0 = self._source_canvas.winfo_rootx()
+            y0 = self._source_canvas.winfo_rooty()
+            x1 = x0 + self._source_canvas.winfo_width()
+            y1 = y0 + self._source_canvas.winfo_height()
+        except Exception:
+            return False
+        return x0 <= event.x_root <= x1 and y0 <= event.y_root <= y1
+
+    def _update_source_trash_cursor(self, event: tk.Event) -> None:
+        if self._source_canvas is None:
+            return
+        if not self._dragging or self._drag_from_index is None or not self._is_event_in_source_panel(event):
+            self._hide_source_trash_cursor()
+            return
+        x = min(max(event.x_root - self._source_canvas.winfo_rootx(), 18), self._source_canvas.winfo_width() - 18)
+        y = max(46, min(56, self._source_canvas.winfo_height() // 2))
+        if self._source_trash_cursor_id is None:
+            self._source_trash_cursor_id = self._source_canvas.create_text(
+                x,
+                y,
+                text="🗑",
+                anchor="center",
+                font=("Segoe UI Emoji", 28),
+                fill="#ef4444",
+            )
+        else:
+            self._source_canvas.coords(self._source_trash_cursor_id, x, y)
+        self._source_canvas.tag_raise(self._source_trash_cursor_id)
+
+    def _hide_source_trash_cursor(self) -> None:
+        if self._source_canvas is not None and self._source_trash_cursor_id is not None:
+            try:
+                self._source_canvas.delete(self._source_trash_cursor_id)
+            except tk.TclError:
+                pass
+            self._source_trash_cursor_id = None
+
     def _on_drag_motion(self, event: tk.Event) -> None:
         if not self._dragging and self._pending_drag_source is not None:
             self._start_drag_source(event, self._pending_drag_source)
@@ -1031,7 +1076,11 @@ class SequencePanel:
             return
         if not self._drag_moved:
             self._drag_moved = True
-        self._update_sequence_drop_cursor(event)
+        if self._is_event_in_source_panel(event):
+            self._hide_sequence_drop_cursor()
+        else:
+            self._update_sequence_drop_cursor(event)
+        self._update_source_trash_cursor(event)
         if self._drag_ghost is None:
             return
         try:
@@ -1043,6 +1092,7 @@ class SequencePanel:
         if not self._dragging:
             return
         self._hide_sequence_drop_cursor()
+        self._hide_source_trash_cursor()
         if not self._drag_moved:
             if self._drag_from_index is None and self._drag_source_path is not None:
                 self._select_source_slide(SlideItem(self._drag_source_path))
@@ -1060,28 +1110,32 @@ class SequencePanel:
             self._drag_from_index = None
             self._unbind_drag_root_events()
             return
-        # determine drop index based on x over sequence canvas
+        # determine drop index based on the visible canvas x-position, not the raw screen x
         drop_index = 0
         try:
             canvas = self._sequence_canvas
             if canvas is not None:
-                rel_x = event.x_root - canvas.winfo_rootx()
+                canvas_x = canvas.canvasx(event.x_root - canvas.winfo_rootx())
                 slot_w = 140
-                drop_index = max(0, int(rel_x // slot_w))
+                drop_index = max(0, min(len(getattr(self.controller, "current_sequence", None).items or []), int((canvas_x - 4) // slot_w)))
         except Exception:
             drop_index = 0
         # if came from source
         if self._drag_from_index is None and self._drag_source_path is not None:
             if not hasattr(self.controller, "current_sequence") or self.controller.current_sequence is None:
                 self.controller.current_sequence = Sequence(name="Untitled", items=[])
-            self.controller.current_sequence.items.insert(drop_index, self._drag_source_path)
+            if not self._is_event_in_source_panel(event):
+                self.controller.current_sequence.items.insert(drop_index, self._drag_source_path)
         elif self._drag_from_index is not None:
-            # reorder within sequence
+            # reorder within sequence or remove the dragged item when dropped over the source panel
             seq = getattr(self.controller, "current_sequence", None)
             if seq is not None and 0 <= self._drag_from_index < len(seq.items):
-                item = seq.items.pop(self._drag_from_index)
-                idx = max(0, min(drop_index, len(seq.items)))
-                seq.items.insert(idx, item)
+                if self._is_event_in_source_panel(event):
+                    seq.items.pop(self._drag_from_index)
+                else:
+                    item = seq.items.pop(self._drag_from_index)
+                    idx = max(0, min(drop_index, len(seq.items)))
+                    seq.items.insert(idx, item)
         # cleanup
         if self._drag_ghost is not None:
             try:

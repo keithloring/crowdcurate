@@ -352,6 +352,36 @@ def test_sequence_panel_reorder_drag_binds_to_thumbnails():
         root.destroy()
 
 
+def test_sequence_panel_removes_item_when_dragged_to_source_panel():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png"), Path("/tmp/c.png")])
+                self._slides = [type("Slide", (), {"source": Path("/tmp/source.png")})()]
+
+            def get_source_slides(self):
+                return self._slides
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        panel._start_drag_sequence(type("Event", (), {"x_root": root.winfo_rootx() + 250, "y_root": root.winfo_rooty() + 50})(), 1)
+        event = type("Event", (), {"x_root": panel._source_canvas.winfo_rootx() + panel._source_canvas.winfo_width() // 2, "y_root": panel._source_canvas.winfo_rooty() + panel._source_canvas.winfo_height() // 2})()
+        panel._on_drag_motion(event)
+        assert panel._source_trash_cursor_id is not None
+        panel._end_drag(event)
+
+        assert [str(p) for p in controller.current_sequence.items] == ["/tmp/a.png", "/tmp/c.png"]
+        assert panel._dragging is False
+        assert panel._source_trash_cursor_id is None
+    finally:
+        root.destroy()
+
+
 def test_sequence_panel_populates_without_reorder_buttons():
     root = tk.Tk()
     root.withdraw()
