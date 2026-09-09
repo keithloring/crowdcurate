@@ -101,6 +101,8 @@ class SequencePanel:
         self._drag_ghost: tk.Toplevel | None = None
         self._drag_source_path: Path | None = None
         self._drag_from_index: int | None = None
+        self._sequence_drop_cursor_id: int | None = None
+        self._sequence_scroll_pos: float = 0.0
 
         # audio files for export
         self._audio_files: list[Path] = []
@@ -154,8 +156,18 @@ class SequencePanel:
             self.show(before_widget=before_widget)
 
     def refresh(self) -> None:
+        if self._sequence_canvas is not None:
+            try:
+                self._sequence_scroll_pos = self._sequence_canvas.xview()[0]
+            except Exception:
+                self._sequence_scroll_pos = 0.0
         self._populate_source()
         self._populate_sequence()
+        if self._sequence_canvas is not None and self._sequence_scroll_pos > 0:
+            try:
+                self._sequence_canvas.xview_moveto(self._sequence_scroll_pos)
+            except Exception:
+                pass
 
     def _load_photo(self, source: Path | SlideItem, max_size: tuple[int, int]) -> ImageTk.PhotoImage | None:
         path = source.source if isinstance(source, SlideItem) else source
@@ -385,9 +397,16 @@ class SequencePanel:
             frame.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
             frame.bind("<B1-Motion>", self._on_drag_motion)
             frame.bind("<ButtonRelease-1>", self._end_drag)
+            lbl.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
+            lbl.bind("<B1-Motion>", self._on_drag_motion)
+            lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += slot_w
         self._sequence_canvas.config(scrollregion=(0, 0, x, 120))
-        self._sequence_canvas.xview_moveto(0)
+        if self._sequence_scroll_pos > 0:
+            try:
+                self._sequence_canvas.xview_moveto(self._sequence_scroll_pos)
+            except Exception:
+                pass
         self._redraw_canvas(self._sequence_canvas)
 
     def _on_audio_select(self) -> None:
@@ -940,6 +959,71 @@ class SequencePanel:
         except Exception:
             pass
 
+    def _sequence_drop_index_for_event(self, event: tk.Event) -> int:
+        if self._sequence_canvas is None:
+            return 0
+        seq = getattr(self.controller, "current_sequence", None)
+        if seq is None:
+            return 0
+        try:
+            rel_x = event.x_root - self._sequence_canvas.winfo_rootx()
+        except Exception:
+            rel_x = 0
+        slot_w = 140
+        if not seq.items:
+            return 0
+
+        gap_positions: list[float] = [4 + 60]
+        for idx in range(len(seq.items) - 1):
+            gap_positions.append(4 + (idx + 1) * slot_w - 10)
+        gap_positions.append(4 + len(seq.items) * slot_w + 60)
+
+        best_index = min(
+            range(len(gap_positions)),
+            key=lambda idx: abs(gap_positions[idx] - rel_x),
+        )
+        return max(0, min(len(seq.items), best_index))
+
+    def _update_sequence_drop_cursor(self, event: tk.Event) -> None:
+        if self._sequence_canvas is None:
+            return
+        if self._dragging is False or self._sequence_canvas is None:
+            self._hide_sequence_drop_cursor()
+            return
+
+        seq = getattr(self.controller, "current_sequence", None)
+        if seq is None:
+            self._hide_sequence_drop_cursor()
+            return
+
+        drop_index = self._sequence_drop_index_for_event(event)
+        slot_w = 140
+        item_count = len(seq.items)
+        if item_count == 0:
+            x = 4 + 60
+        elif drop_index >= item_count:
+            x = 4 + item_count * slot_w + 60
+        else:
+            x = 4 + drop_index * slot_w - 10
+        if self._sequence_drop_cursor_id is None:
+            self._sequence_drop_cursor_id = self._sequence_canvas.create_line(
+                x, 0, x, 120,
+                fill="#ef4444",
+                width=2,
+                dash=(4, 2),
+            )
+        else:
+            self._sequence_canvas.coords(self._sequence_drop_cursor_id, x, 0, x, 120)
+        self._sequence_canvas.tag_raise(self._sequence_drop_cursor_id)
+
+    def _hide_sequence_drop_cursor(self) -> None:
+        if self._sequence_canvas is not None and self._sequence_drop_cursor_id is not None:
+            try:
+                self._sequence_canvas.delete(self._sequence_drop_cursor_id)
+            except tk.TclError:
+                pass
+            self._sequence_drop_cursor_id = None
+
     def _on_drag_motion(self, event: tk.Event) -> None:
         if not self._dragging and self._pending_drag_source is not None:
             self._start_drag_source(event, self._pending_drag_source)
@@ -947,6 +1031,7 @@ class SequencePanel:
             return
         if not self._drag_moved:
             self._drag_moved = True
+        self._update_sequence_drop_cursor(event)
         if self._drag_ghost is None:
             return
         try:
@@ -957,6 +1042,7 @@ class SequencePanel:
     def _end_drag(self, event: tk.Event) -> None:
         if not self._dragging:
             return
+        self._hide_sequence_drop_cursor()
         if not self._drag_moved:
             if self._drag_from_index is None and self._drag_source_path is not None:
                 self._select_source_slide(SlideItem(self._drag_source_path))

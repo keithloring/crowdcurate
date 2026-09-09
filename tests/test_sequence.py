@@ -254,6 +254,29 @@ def test_source_panel_scrolls_selected_thumbnail_into_view():
         root.destroy()
 
 
+def test_sequence_panel_scroll_position_is_preserved_on_refresh():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png")])
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+        panel._sequence_canvas.xview_moveto(0.75)
+        root.update_idletasks()
+
+        panel._populate_sequence()
+        root.update_idletasks()
+
+        assert float(panel._sequence_canvas.xview()[0]) > 0.0
+    finally:
+        root.destroy()
+
+
 def test_active_source_drag_is_not_interrupted_by_sequence_drag_start():
     root = tk.Tk()
     root.withdraw()
@@ -273,6 +296,58 @@ def test_active_source_drag_is_not_interrupted_by_sequence_drag_start():
         assert panel._dragging is True
         assert panel._drag_source_path == source_slide.source
         assert panel._drag_from_index is None
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_shows_drop_cursor_while_dragging():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png")])
+
+        panel = SequencePanel(root, DummyController())
+        panel.show()
+        root.update_idletasks()
+        panel._dragging = True
+        panel._drag_moved = True
+        panel._drag_ghost = None
+        event = type("Event", (), {"x_root": root.winfo_rootx() + 180, "y_root": root.winfo_rooty() + 60})()
+
+        panel._on_drag_motion(event)
+
+        assert panel._sequence_drop_cursor_id is not None
+        cursor_x = panel._sequence_canvas.coords(panel._sequence_drop_cursor_id)[0]
+        assert cursor_x == 134.0
+    finally:
+        root.destroy()
+
+
+def test_sequence_panel_reorder_drag_binds_to_thumbnails():
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[Path("/tmp/a.png"), Path("/tmp/b.png")])
+
+        panel = SequencePanel(root, DummyController())
+        panel._populate_sequence()
+        root.update_idletasks()
+
+        bound_widget_count = 0
+        for item_id in panel._sequence_canvas.find_all():
+            window_name = panel._sequence_canvas.itemcget(item_id, "window")
+            if not window_name:
+                continue
+            window = panel._sequence_canvas.nametowidget(window_name)
+            label = window.winfo_children()[0]
+            if label.bind("<ButtonPress-1>"):
+                bound_widget_count += 1
+
+        assert bound_widget_count >= 2
     finally:
         root.destroy()
 
