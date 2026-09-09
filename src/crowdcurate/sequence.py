@@ -102,6 +102,9 @@ class SequencePanel:
         self._drag_source_path: Path | None = None
         self._drag_from_index: int | None = None
 
+        # audio files for export
+        self._audio_files: list[Path] = []
+
         self._create_widgets()
 
     def _create_widgets(self) -> None:
@@ -109,6 +112,7 @@ class SequencePanel:
         toolbar.pack(fill="x", pady=(4, 4))
         ttk.Label(toolbar, text="Sequence Editor", font=("Segoe UI", 10, "bold")).pack(side="left")
         ttk.Button(toolbar, text="Export MP4", command=self._export_sequence_video).pack(side="right")
+        ttk.Button(toolbar, text="Audio", command=self._on_audio_select).pack(side="right")
         ttk.Button(toolbar, text="New", command=self._new_sequence).pack(side="right")
         ttk.Button(toolbar, text="Save", command=self._save_sequence).pack(side="right", padx=4)
         ttk.Button(toolbar, text="Clear", command=self._clear_sequence).pack(side="right", padx=4)
@@ -381,13 +385,21 @@ class SequencePanel:
             frame.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
             frame.bind("<B1-Motion>", self._on_drag_motion)
             frame.bind("<ButtonRelease-1>", self._end_drag)
-            lbl.bind("<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i))
-            lbl.bind("<B1-Motion>", self._on_drag_motion)
-            lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += slot_w
         self._sequence_canvas.config(scrollregion=(0, 0, x, 120))
         self._sequence_canvas.xview_moveto(0)
         self._redraw_canvas(self._sequence_canvas)
+
+    def _on_audio_select(self) -> None:
+        audio_files = filedialog.askopenfilenames(
+            title="Select Audio Files",
+            filetypes=[("Audio files", "*.mp3 *.wav"), ("MP3 files", "*.mp3"), ("WAV files", "*.wav"), ("All files", "*.*")],
+            parent=self.parent,
+        )
+        if audio_files:
+            self._audio_files = [Path(f) for f in audio_files]
+            file_list = ", ".join(Path(f).name for f in audio_files)
+            messagebox.showinfo("Audio Selected", f"Selected {len(audio_files)} file(s):\n{file_list}", parent=self.parent)
 
     def _new_sequence(self) -> None:
         name = simpledialog.askstring("New Sequence", "Sequence name:", parent=self.parent)
@@ -395,6 +407,7 @@ class SequencePanel:
             return
         seq = Sequence(name=name, items=[])
         self.controller.current_sequence = seq
+        self._audio_files = []
         self.refresh()
 
     def _save_sequence(self) -> None:
@@ -413,6 +426,98 @@ class SequencePanel:
         if hasattr(self.controller, "current_sequence") and self.controller.current_sequence is not None:
             self.controller.current_sequence.items.clear()
             self.refresh()
+
+    def _get_audio_duration(self, audio_file: Path) -> float:
+        """Get the duration of an audio file in seconds using ffprobe."""
+        try:
+            result = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1:nokey=1",
+                    str(audio_file),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+        except Exception:
+            pass
+        return 0.0
+
+    def _process_audio_track(self, audio_files: list[Path], video_duration: float, temp_dir: Path) -> Path | None:
+        """Process audio files: concatenate, loop to match video length, and add fade in/out."""
+        if not audio_files or video_duration <= 0:
+            return None
+
+        try:
+            concat_file = temp_dir / "audio_concat.txt"
+            with open(concat_file, "w", encoding="utf-8") as f:
+                for audio_file in audio_files:
+                    f.write(f"file '{audio_file.as_posix()}'\n")
+
+            concatenated_audio = temp_dir / "audio_concatenated.wav"
+            concat_cmd = [
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_file),
+                "-c",
+                "pcm_s16le",
+                "-q:a",
+                "9",
+                str(concatenated_audio),
+            ]
+            result = subprocess.run(concat_cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode != 0:
+                return None
+
+            total_audio_duration = self._get_audio_duration(concatenated_audio)
+            if total_audio_duration <= 0:
+                return None
+
+            loops_needed = int(video_duration / total_audio_duration) + 1
+            fade_in_duration = 0.5
+            fade_out_duration = 0.5
+            loop_end = video_duration - fade_out_duration
+            filter_str = (
+                f"aloop=loop={loops_needed}:size=1000000000[looped];"
+                f"[looped]afade=t=in:st=0:d={fade_in_duration},"
+                f"afade=t=out:st={loop_end}:d={fade_out_duration}[faded]"
+            )
+
+            processed_audio = temp_dir / "audio_processed.aac"
+            process_cmd = [
+                "ffmpeg",
+                "-y",
+                "-i",
+                str(concatenated_audio),
+                "-filter_complex",
+                filter_str,
+                "-map",
+                "[faded]",
+                "-c:a",
+                "aac",
+                "-b:a",
+                "128k",
+                str(processed_audio),
+            ]
+            result = subprocess.run(process_cmd, capture_output=True, text=True, timeout=120)
+            if result.returncode == 0 and processed_audio.exists():
+                return processed_audio
+        except Exception:
+            pass
+        return None
 
     def _parse_ffmpeg_progress(self, line: str, total_frames: int) -> float | None:
         if total_frames <= 0:
@@ -698,6 +803,18 @@ class SequencePanel:
                 if fade_paths:
                     fh.write(f"file '{fade_paths[-1].as_posix()}'\n")
 
+            video_duration = len(frame_paths) * (2.0 + fade_steps * step_duration + step_duration)
+            audio_track = None
+            if self._audio_files:
+                self._set_export_progress(dialog, 75.0, "Processing audio...")
+                self._append_ffmpeg_output(dialog, f"Processing {len(self._audio_files)} audio file(s)...")
+                dialog.update_idletasks()
+                audio_track = self._process_audio_track(self._audio_files, video_duration, temp_dir)
+                if audio_track:
+                    self._append_ffmpeg_output(dialog, f"Audio processed: {audio_track.name}")
+                else:
+                    self._append_ffmpeg_output(dialog, "Warning: Audio processing failed, continuing without audio")
+
             ffmpeg_cmd = [
                 "ffmpeg",
                 "-y",
@@ -707,12 +824,22 @@ class SequencePanel:
                 "0",
                 "-i",
                 str(frame_list_path),
+            ]
+
+            if audio_track:
+                ffmpeg_cmd.extend(["-i", str(audio_track)])
+
+            ffmpeg_cmd.extend([
                 "-c:v",
                 "libx264",
                 "-pix_fmt",
                 "yuv420p",
-                str(output_path),
-            ]
+            ])
+
+            if audio_track:
+                ffmpeg_cmd.extend(["-c:a", "aac", "-b:a", "128k", "-shortest"])
+
+            ffmpeg_cmd.append(str(output_path))
 
             self._set_export_progress(dialog, 80.0, "Launching ffmpeg...")
             self._append_ffmpeg_output(dialog, "Encoding MP4 with ffmpeg...")
