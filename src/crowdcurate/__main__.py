@@ -1,3 +1,5 @@
+"""Command-line entry-point for the CrowdCurate package."""
+
 try:
     from .app import main
 except ImportError:

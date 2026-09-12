@@ -5,5 +5,11 @@ from .controller import SlideshowController
 from .model import SlideDeck, SlideItem
 from .view import SlideshowView
 
-__all__ = ["main", "SlideDeck", "SlideItem", "SlideshowController", "SlideshowView"]
+__all__ = [
+    "SlideDeck",
+    "SlideItem",
+    "SlideshowController",
+    "SlideshowView",
+    "main",
+]
 __version__ = "0.1.0"

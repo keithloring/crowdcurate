@@ -1,3 +1,5 @@
+# ruff: noqa: I001, ANN002
+
 import io
 from pathlib import Path
 import tempfile

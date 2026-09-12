@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
+# ruff: noqa: C901, PLR2004, SIM114, PLR0912, PLR0915, BLE001, B905, S608, D103, D202, D212
 
-"""
-Create a directory of symlinks to images selected by digiKam tags.
+"""Create a directory of symlinks to images selected by digiKam tags.
 
 Designed for digiKam 7.x SQLite databases.
 
@@ -16,7 +16,6 @@ Default behavior:
 Use --include-trash if trashed images should also be symlinked.
 
 Example:
-
     ./digikam_symlinks.py \
         --db "/media/keith/November/data/scans/Documents/digikam4.db" \
         --tag "People/Linda Loring [Hopkins, Moore]" \
@@ -43,6 +42,8 @@ from pathlib import Path
 
 @dataclass
 class ImageResult:
+    """Metadata result for a single image from digiKam."""
+
     image_id: int
     name: str
     file_size: int | None
@@ -59,9 +60,9 @@ class ImageResult:
 
 def open_database(db_path: Path) -> sqlite3.Connection:
     """Open digiKam database read-only."""
-
     if not db_path.is_file():
-        raise FileNotFoundError(f"Database not found: {db_path}")
+        message = f"Database not found: {db_path}"
+        raise FileNotFoundError(message)
 
     uri = f"file:{db_path}?mode=ro"
 
@@ -80,7 +81,6 @@ def load_tags(
     connection: sqlite3.Connection,
 ) -> list[tuple[int, str]]:
     """Return (tag_id, full_hierarchical_path)."""
-
     rows = connection.execute("""
         SELECT id, pid, name
         FROM Tags
@@ -96,7 +96,8 @@ def load_tags(
 
         while current and current in tags_by_id:
             if current in seen:
-                raise RuntimeError(f"Cycle in digiKam tag hierarchy at tag {current}")
+                message = f"Cycle in digiKam tag hierarchy at tag {current}"
+                raise RuntimeError(message)
 
             seen.add(current)
 
@@ -119,17 +120,14 @@ def find_matching_tag(
     connection: sqlite3.Connection,
     requested: str,
 ) -> int:
-    """
-    Find an exact hierarchical tag.
+    """Find an exact hierarchical tag.
 
     For example:
-
         People/Linda Loring [Hopkins, Moore]
 
     must match that complete tag path.
 
-    A bare tag name is accepted only when it uniquely identifies
-    one tag.
+    A bare tag name is accepted only when it uniquely identifies one tag.
     """
 
     requested = requested.strip().strip("/")
@@ -142,7 +140,8 @@ def find_matching_tag(
         return exact[0]
 
     if len(exact) > 1:
-        raise RuntimeError(f"Multiple exact matches found for tag {requested!r}")
+        message = f"Multiple exact matches found for tag {requested!r}"
+        raise RuntimeError(message)
 
     # If the user supplied only a leaf name, allow it if unique.
     leaf_matches = [
@@ -155,7 +154,8 @@ def find_matching_tag(
         return leaf_matches[0]
 
     if not leaf_matches:
-        raise RuntimeError(f"No digiKam tag found matching {requested!r}")
+        message = f"No digiKam tag found matching {requested!r}"
+        raise RuntimeError(message)
 
     paths = dict(tags)
 

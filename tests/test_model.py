@@ -1,3 +1,5 @@
+# ruff: noqa: PT017
+
 from pathlib import Path
 
 from crowdcurate.model import SlideDeck

@@ -1,25 +1,31 @@
+# ruff: noqa: D100, D101
+
 from __future__ import annotations
 
+import contextlib
 import shlex
 import subprocess
 import time
 import tkinter as tk
+from collections.abc import Callable
 from tkinter import messagebox, simpledialog, ttk
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageTk
 
 from .metadata import ExifEditorWindow, MetadataWindow
-from .model import SlideItem
+from .sequence import SequencePanel
 
 if TYPE_CHECKING:
     from .controller import SlideshowController
+    from .model import SlideItem
 
 ScheduleCallback = Callable[[], None]
+MIN_RENDER_SIZE = 50
 
 
 class SlideshowView:  # pylint: disable=too-many-instance-attributes
-    def __init__(
+    def __init__(  # noqa: PLR0915
         self, title: str = "CrowdCurate", size: tuple[int, int] = (1024, 768)
     ) -> None:
         self.root = tk.Tk()
@@ -27,11 +33,11 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.geometry(f"{size[0]}x{size[1]}")
         self.root.minsize(640, 480)
 
-        self._controller: Any | None = None
+        self._controller: SlideshowController | None = None
         self._current_photo: ImageTk.PhotoImage | None = None
         self._current_slide: SlideItem | None = None
         self._current_image_original: Image.Image | None = None
-        self._resize_after_id: Any | None = None
+        self._resize_after_id: int | None = None
         self._allow_upscale: bool = True
         self._last_image_frame_size: tuple[int, int] | None = None
         self._pending_configure_size: tuple[int, int] | None = None
@@ -82,52 +88,54 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.status_label = ttk.Label(self.root, anchor="w", text="Ready")
         self.status_label.pack(fill="x", padx=10, pady=(0, 10))
 
-        self.root.bind("<Left>", lambda event: self._on_previous())
-        self.root.bind("<Right>", lambda event: self._on_next())
-        self.root.bind("<space>", lambda event: self._on_play_pause())
-        self.root.bind("<Escape>", lambda event: self.root.quit())
-        self.root.bind("<i>", lambda event: self._on_info())
+        self.root.bind("<Left>", lambda _event: self._on_previous())
+        self.root.bind("<Right>", lambda _event: self._on_next())
+        self.root.bind("<space>", lambda _event: self._on_play_pause())
+        self.root.bind("<Escape>", lambda _event: self.root.quit())
+        self.root.bind("<i>", lambda _event: self._on_info())
         # Refresh current image after external edit with 'r'
-        self.root.bind("r", lambda event: self._on_refresh())
+        self.root.bind("r", lambda _event: self._on_refresh())
         # Jump to a specific slide index with 'j'
-        self.root.bind("j", lambda event: self._on_jump_to())
+        self.root.bind("j", lambda _event: self._on_jump_to())
         # Edit EXIF/IPTC metadata with 'x'
-        self.root.bind("x", lambda event: self._on_edit_exif())
+        self.root.bind("x", lambda _event: self._on_edit_exif())
         # Show help with '?' or F1
-        self.root.bind("?", lambda event: self._on_help())
-        self.root.bind("<F1>", lambda event: self._on_help())
+        self.root.bind("?", lambda _event: self._on_help())
+        self.root.bind("<F1>", lambda _event: self._on_help())
         # Re-render the current image after window resizing (debounced)
         self.root.bind("<Configure>", self._on_configure)
         # Toggle sequence panel (created lazily)
-        self._sequence_panel: Any | None = None
-        self.root.bind("s", lambda event: self._toggle_sequence())
+        self._sequence_panel: SequencePanel | None = None
+        self.root.bind("s", lambda _event: self._toggle_sequence())
         # Toggle upscaling on/off with 'u'
-        self.root.bind("u", lambda event: self._toggle_upscale())
+        self.root.bind("u", lambda _event: self._toggle_upscale())
         self.root.bind(
             "<Control-Shift-KeyPress-plus>",
-            lambda event: self.metadata_window.increase_font_size(),
+            lambda _event: self.metadata_window.increase_font_size(),
         )
         self.root.bind(
             "<Control-Shift-KeyPress-equal>",
-            lambda event: self.metadata_window.increase_font_size(),
+            lambda _event: self.metadata_window.increase_font_size(),
         )
         self.root.bind(
             "<Control-Shift-KeyPress-minus>",
-            lambda event: self.metadata_window.decrease_font_size(),
+            lambda _event: self.metadata_window.decrease_font_size(),
         )
         self.root.bind(
             "<Control-KeyPress-KP_Add>",
-            lambda event: self.metadata_window.increase_font_size(),
+            lambda _event: self.metadata_window.increase_font_size(),
         )
         self.root.bind(
             "<Control-KeyPress-KP_Subtract>",
-            lambda event: self.metadata_window.decrease_font_size(),
+            lambda _event: self.metadata_window.decrease_font_size(),
         )
 
-    def set_controller(self, controller: "SlideshowController") -> None:
+    def set_controller(self, controller: SlideshowController) -> None:
+        """Attach the controller that drives the view."""
         self._controller = controller
 
     def display_slide(self, slide: SlideItem, image: Image.Image) -> None:
+        """Display a slide and refresh dependent panels."""
         if not slide.source.exists():
             self.show_placeholder("Image not found")
             return
@@ -136,16 +144,17 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._current_image_original = image
         self.metadata_window.update(slide)
         if getattr(self, "_sequence_panel", None) is not None:
-            try:
+            with contextlib.suppress(
+                AttributeError, RuntimeError, TypeError, tk.TclError
+            ):
                 self._sequence_panel.refresh()
-            except Exception:
-                pass
         self._pending_configure_size = None
         self._pending_force_refresh = True
         self._stable_size_since = None
         self._schedule_size_stable_refresh()
 
     def show_placeholder(self, text: str) -> None:
+        """Show an informative placeholder when an image cannot be rendered."""
         self.image_label.config(
             image="",
             text=text,
@@ -183,10 +192,8 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
 
     def _schedule_size_stable_refresh(self, force: bool = False) -> None:
         if self._resize_after_id is not None:
-            try:
+            with contextlib.suppress(tk.TclError):
                 self.root.after_cancel(self._resize_after_id)
-            except tk.TclError:
-                pass
         self._pending_force_refresh = self._pending_force_refresh or force
         self._resize_after_id = self.root.after(150, self._process_configure_idle)
 
@@ -194,7 +201,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._resize_after_id = None
         current_size = self._get_current_frame_size()
         now = time.monotonic()
-        if current_size[0] < 50 or current_size[1] < 50:
+        if current_size[0] < MIN_RENDER_SIZE or current_size[1] < MIN_RENDER_SIZE:
             self._stable_size_since = None
             self._pending_configure_size = None
             self._schedule_size_stable_refresh()
@@ -224,20 +231,25 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self._pending_force_refresh = False
 
     def update_status(self, text: str) -> None:
+        """Update the status text shown at the bottom of the window."""
         self.status_label.config(text=text)
 
     def update_play_button(self, playing: bool) -> None:
+        """Update the Play/Pause button label based on playback state."""
         label = "Pause" if playing else "Play"
         self.buttons["play"].config(text=label)
 
-    def schedule(self, delay_seconds: float, callback: ScheduleCallback) -> Any:
+    def schedule(self, delay_seconds: float, callback: ScheduleCallback) -> int:
+        """Schedule a callback after a delay measured in seconds."""
         return self.root.after(int(delay_seconds * 1000), callback)
 
-    def cancel_scheduled(self, after_id: Any) -> None:
+    def cancel_scheduled(self, after_id: int | None) -> None:
+        """Cancel a scheduled callback if it has not fired yet."""
         if after_id is not None:
             self.root.after_cancel(after_id)
 
     def run(self) -> None:
+        """Start the Tk main loop."""
         self.root.mainloop()
 
     def _resize_image(self, image: Image.Image) -> Image.Image:
@@ -270,7 +282,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             return
 
         current_size = self._get_current_frame_size()
-        if current_size[0] < 50 or current_size[1] < 50:
+        if current_size[0] < MIN_RENDER_SIZE or current_size[1] < MIN_RENDER_SIZE:
             self._schedule_size_stable_refresh(force=force)
             return
 
@@ -333,20 +345,16 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         self.root.after_idle(self._refresh_current_image)
 
     def _toggle_sequence(self) -> None:
-        # Lazy import/creation to avoid affecting init ordering
+        # Lazy creation to avoid affecting init ordering
         if getattr(self, "_sequence_panel", None) is None:
             try:
-                from .sequence import SequencePanel
-
                 self._sequence_panel = SequencePanel(self.main_area, self._controller)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 self._sequence_panel = None
         if self._sequence_panel is None:
             return
-        try:
+        with contextlib.suppress(AttributeError, RuntimeError, TypeError, tk.TclError):
             self._sequence_panel.toggle(before_widget=self.image_frame)
-        except Exception:
-            pass
         self.root.after_idle(self._refresh_current_image)
 
     def _on_refresh(self) -> None:
@@ -413,7 +421,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             return
         ExifEditorWindow(self.root, self._current_slide.source)
 
-    def _on_image_right_click(self, event: Any) -> None:
+    def _on_image_right_click(self, event: tk.Event) -> None:
         """Show a popup menu with 'Open with' choices for the current image."""
         if self._current_slide is None:
             return
@@ -456,7 +464,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             cmd_filled = cmd.replace("{file}", path)
             args = shlex.split(cmd_filled)
         else:
-            args = shlex.split(cmd) + [path]
+            args = [*shlex.split(cmd), path]
 
         try:
             # pylint: disable=consider-using-with

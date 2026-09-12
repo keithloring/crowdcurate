@@ -1,30 +1,39 @@
+"""Sequence storage and sequence editor UI logic for the slideshow app."""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+import contextlib
 import json
-from pathlib import Path
 import re
 import shutil
 import subprocess
 import tempfile
 import threading
-from typing import Any
-
 import tkinter as tk
-from tkinter import filedialog, ttk, messagebox, simpledialog
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import TYPE_CHECKING, Any
+
 from PIL import Image, ImageTk
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 from .model import SlideItem
 
 
 @dataclass
 class Sequence:
+    """A single named sequence of slide paths."""
+
     name: str
     items: list[Path]
     created_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
+        """Serialize the sequence to a JSON-compatible dictionary."""
         return {
             "name": self.name,
             "items": [str(p) for p in self.items],
@@ -32,7 +41,8 @@ class Sequence:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "Sequence":
+    def from_dict(cls, data: dict[str, Any]) -> Sequence:
+        """Deserialize a sequence from a JSON dictionary."""
         items = [Path(p) for p in data.get("items", [])]
         return cls(
             name=data.get("name", "Unnamed"),
@@ -42,7 +52,10 @@ class Sequence:
 
 
 class SequenceStore:
+    """Disk-backed storage for named sequences."""
+
     def __init__(self, base_dir: Path | None = None) -> None:
+        """Create the sequence store under a base directory."""
         self.base_dir = (base_dir or Path.cwd()).expanduser().resolve() / ".sequences"
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -51,22 +64,25 @@ class SequenceStore:
         return safe or "sequence"
 
     def save(self, seq: Sequence) -> Path:
+        """Persist a sequence to disk and return its path."""
         filename = f"{self._safe_name(seq.name)}.json"
         dest = self.base_dir / filename
-        with open(dest, "w", encoding="utf-8") as fh:
+        with dest.open("w", encoding="utf-8") as fh:
             json.dump(seq.to_dict(), fh, indent=2)
         return dest
 
     def load(self, name: str) -> Sequence | None:
+        """Load a sequence by name from the on-disk store."""
         filename = f"{self._safe_name(name)}.json"
         path = self.base_dir / filename
         if not path.exists():
             return None
-        with open(path, "r", encoding="utf-8") as fh:
+        with path.open("r", encoding="utf-8") as fh:
             data = json.load(fh)
         return Sequence.from_dict(data)
 
     def list(self) -> list[str]:
+        """List the saved sequence names in the store."""
         return [p.stem for p in sorted(self.base_dir.glob("*.json"))]
 
 
@@ -74,13 +90,15 @@ class SequencePanel:
     """Minimal toggleable panel with two thumbnail rows and basic DnD.
 
     - Source row: shows thumbnails from provided slides (list of SlideItem)
-    - Sequence row: shows current sequence; supports click-to-add, drag from source to sequence
-      and reorder within sequence.
+    - Sequence row: shows current sequence; supports click-to-add, drag from
+      source to sequence and reorder within sequence.
 
-    This class is intentionally contained so view.py can import and instantiate it lazily.
+    This class is intentionally contained so view.py can import and instantiate it
+    lazily.
     """
 
-    def __init__(self, parent: tk.Widget, controller: Any) -> None:
+    def __init__(self, parent: tk.Widget, controller: object) -> None:
+        """Create the sequence panel and its widget tree."""
         self.parent = parent
         self.controller = controller
         self.frame = ttk.Frame(self.parent)
@@ -155,8 +173,14 @@ class SequencePanel:
         # Populate only after the panel is shown and has a real width/height.
 
     def show(self, before_widget: tk.Widget | None = None) -> None:
+        """Show the panel and refresh its contents."""
         if not self._visible:
-            pack_args = {"side": "bottom", "fill": "x", "padx": (0, 0), "pady": (6, 0)}
+            pack_args = {
+                "side": "bottom",
+                "fill": "x",
+                "padx": (0, 0),
+                "pady": (6, 0),
+            }
             if before_widget is not None:
                 pack_args["before"] = before_widget
             self.frame.pack(**pack_args)
@@ -164,29 +188,32 @@ class SequencePanel:
         self.refresh()
 
     def hide(self) -> None:
+        """Hide the sequence panel from the UI."""
         if self._visible:
             self.frame.pack_forget()
             self._visible = False
 
     def toggle(self, before_widget: tk.Widget | None = None) -> None:
+        """Toggle visibility of the sequence panel."""
         if self._visible:
             self.hide()
         else:
             self.show(before_widget=before_widget)
 
     def refresh(self) -> None:
+        """Refresh the source and sequence canvases."""
         if self._sequence_canvas is not None:
             try:
                 self._sequence_scroll_pos = self._sequence_canvas.xview()[0]
-            except Exception:
+            except (AttributeError, tk.TclError, TypeError, ValueError):
                 self._sequence_scroll_pos = 0.0
         self._populate_source()
         self._populate_sequence()
         if self._sequence_canvas is not None and self._sequence_scroll_pos > 0:
-            try:
+            with contextlib.suppress(
+                AttributeError, tk.TclError, TypeError, ValueError
+            ):
                 self._sequence_canvas.xview_moveto(self._sequence_scroll_pos)
-            except Exception:
-                pass
 
     def _load_photo(
         self, source: Path | SlideItem, max_size: tuple[int, int]
@@ -197,21 +224,20 @@ class SequencePanel:
             cached = getattr(thumbnail_cache, "_cache", {}).get(str(path))
             if cached is not None:
                 return cached
-            placeholder = thumbnail_cache.get_photo(path, max_size=max_size)
-            return placeholder
+            return thumbnail_cache.get_photo(path, max_size=max_size)
         if hasattr(self.controller, "cache") and self.controller.cache is not None:
             try:
                 slide = source if isinstance(source, SlideItem) else SlideItem(path)
                 if hasattr(self.controller.cache, "get_thumbnail"):
                     img = self.controller.cache.get_thumbnail(slide, max_size=max_size)
                     return ImageTk.PhotoImage(img)
-            except Exception:
+            except (AttributeError, OSError, TypeError, ValueError):
                 pass
         try:
             img = Image.open(path)
             img.thumbnail(max_size, Image.Resampling.LANCZOS)
             return ImageTk.PhotoImage(img)
-        except Exception:
+        except (OSError, AttributeError, TypeError, ValueError):
             return None
 
     def _redraw_canvas(self, canvas: tk.Canvas | None) -> None:
@@ -220,10 +246,8 @@ class SequencePanel:
         # Avoid nested Tk event processing here: forcing a full canvas.update() from
         # inside a refresh can re-enter the GUI loop, delay async thumbnail callbacks,
         # and freeze the UI after a click on a thumbnail.
-        try:
+        with contextlib.suppress(tk.TclError):
             canvas.update_idletasks()
-        except tk.TclError:
-            pass
 
     def _current_source_key(self) -> str | None:
         if self.controller is None:
@@ -236,16 +260,14 @@ class SequencePanel:
             return None
         try:
             return str(current_slide.source.resolve())
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             return str(current_slide.source)
 
     def _scroll_source_selection_into_view(self) -> None:
         if self._source_canvas is None:
             return
-        try:
+        with contextlib.suppress(tk.TclError):
             self._source_canvas.update_idletasks()
-        except tk.TclError:
-            pass
         selected_key = self._current_source_key()
         if selected_key is None:
             return
@@ -320,7 +342,7 @@ class SequencePanel:
         if self._source_canvas is not None:
             self._scroll_source_selection_into_view()
 
-    def _populate_source(self) -> None:
+    def _populate_source(self) -> None:  # noqa: C901
         if self._source_canvas is None or self.controller is None:
             return
         old_scroll = self._source_canvas.xview()[0]
@@ -355,19 +377,19 @@ class SequencePanel:
             window_id = self._source_canvas.create_window(x, 4, anchor="nw", window=lbl)
             try:
                 path_key = str(slide.source.resolve())
-            except Exception:
+            except (OSError, RuntimeError, ValueError):
                 path_key = str(slide.source)
             self._source_widgets[path_key] = lbl
             self._source_widget_ids[path_key] = window_id
             if hasattr(self.controller, "thumbnail_cache"):
 
-                def make_on_ready(widget):
-                    def _on_ready(p, ph):
-                        try:
+                def make_on_ready(
+                    widget: tk.Widget,
+                ) -> Callable[[object, ImageTk.PhotoImage | None], None]:
+                    def _on_ready(_p: object, ph: ImageTk.PhotoImage | None) -> None:
+                        with contextlib.suppress(AttributeError, tk.TclError):
                             widget.configure(image=ph)
                             widget.image = ph
-                        except Exception:
-                            pass
 
                     return _on_ready
 
@@ -377,7 +399,7 @@ class SequencePanel:
                     on_ready=make_on_ready(lbl),
                 )
 
-            def _on_source_click(event, s=slide):
+            def _on_source_click(_event: tk.Event, s: SlideItem = slide) -> None:
                 self._pending_drag_source = s
                 self._select_source_slide(s)
 
@@ -426,7 +448,7 @@ class SequencePanel:
             try:
                 slide = SlideItem(path)
                 photo = self._load_photo(slide, (120, 80))
-            except Exception:
+            except (AttributeError, OSError, TypeError, ValueError):
                 photo = None
             frame = ttk.Frame(self._sequence_canvas)
             lbl = tk.Label(frame, image=photo, bg="white", bd=0, highlightthickness=0)
@@ -435,13 +457,13 @@ class SequencePanel:
             lbl.pack()
             if hasattr(self.controller, "thumbnail_cache"):
 
-                def make_on_ready(widget):
-                    def _on_ready(p, ph):
-                        try:
+                def make_on_ready(
+                    widget: tk.Widget,
+                ) -> Callable[[object, ImageTk.PhotoImage | None], None]:
+                    def _on_ready(_p: object, ph: ImageTk.PhotoImage | None) -> None:
+                        with contextlib.suppress(AttributeError, tk.TclError):
                             widget.configure(image=ph)
                             widget.image = ph
-                        except Exception:
-                            pass
 
                     return _on_ready
 
@@ -452,22 +474,22 @@ class SequencePanel:
                 )
             self._sequence_canvas.create_window(x, 4, anchor="nw", window=frame)
             frame.bind(
-                "<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i)
+                "<ButtonPress-1>",
+                lambda _event, i=idx: self._start_drag_sequence(_event, i),
             )
             frame.bind("<B1-Motion>", self._on_drag_motion)
             frame.bind("<ButtonRelease-1>", self._end_drag)
             lbl.bind(
-                "<ButtonPress-1>", lambda e, i=idx: self._start_drag_sequence(e, i)
+                "<ButtonPress-1>",
+                lambda _event, i=idx: self._start_drag_sequence(_event, i),
             )
             lbl.bind("<B1-Motion>", self._on_drag_motion)
             lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += slot_w
         self._sequence_canvas.config(scrollregion=(0, 0, x, 120))
         if self._sequence_scroll_pos > 0:
-            try:
+            with contextlib.suppress(tk.TclError):
                 self._sequence_canvas.xview_moveto(self._sequence_scroll_pos)
-            except Exception:
-                pass
         self._redraw_canvas(self._sequence_canvas)
 
     def _on_audio_select(self) -> None:
@@ -535,10 +557,11 @@ class SequencePanel:
 
     def _get_audio_duration(self, audio_file: Path) -> float:
         """Get the duration of an audio file in seconds using ffprobe."""
+        ffprobe_path = shutil.which("ffprobe") or "ffprobe"
         try:
-            result = subprocess.run(
+            result = subprocess.run(  # noqa: S603
                 [
-                    "ffprobe",
+                    ffprobe_path,
                     "-v",
                     "error",
                     "-show_entries",
@@ -550,23 +573,24 @@ class SequencePanel:
                 capture_output=True,
                 text=True,
                 timeout=10,
+                check=False,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return float(result.stdout.strip())
-        except Exception:
-            pass
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return 0.0
         return 0.0
 
     def _process_audio_track(
         self, audio_files: list[Path], video_duration: float, temp_dir: Path
     ) -> Path | None:
-        """Process audio files: concatenate, loop to match video length, and add fade in/out."""
+        """Process audio files: concatenate, loop to match video length and fade."""
         if not audio_files or video_duration <= 0:
             return None
 
         try:
             concat_file = temp_dir / "audio_concat.txt"
-            with open(concat_file, "w", encoding="utf-8") as f:
+            with concat_file.open("w", encoding="utf-8") as f:
                 for audio_file in audio_files:
                     f.write(f"file '{audio_file.as_posix()}'\n")
 
@@ -586,8 +610,12 @@ class SequencePanel:
                 "9",
                 str(concatenated_audio),
             ]
-            result = subprocess.run(
-                concat_cmd, capture_output=True, text=True, timeout=120
+            result = subprocess.run(  # noqa: S603
+                concat_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             )
             if result.returncode != 0:
                 return None
@@ -622,13 +650,17 @@ class SequencePanel:
                 "128k",
                 str(processed_audio),
             ]
-            result = subprocess.run(
-                process_cmd, capture_output=True, text=True, timeout=120
+            result = subprocess.run(  # noqa: S603
+                process_cmd,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
             )
             if result.returncode == 0 and processed_audio.exists():
                 return processed_audio
-        except Exception:
-            pass
+        except (OSError, RuntimeError, subprocess.SubprocessError, ValueError):
+            return None
         return None
 
     def _parse_ffmpeg_progress(self, line: str, total_frames: int) -> float | None:
@@ -647,7 +679,7 @@ class SequencePanel:
     def _play_exported_video(self, output_path: Path | str) -> None:
         path = Path(output_path).expanduser().resolve()
         try:
-            subprocess.Popen(["vlc", str(path)])
+            subprocess.Popen(["vlc", str(path)])  # noqa: S603, S607
         except FileNotFoundError:
             messagebox.showerror(
                 "Play video",
@@ -657,6 +689,7 @@ class SequencePanel:
 
     def _show_ffmpeg_status_dialog(self, total_frames: int) -> tk.Toplevel:
         dialog = tk.Toplevel(self.parent)
+        dialog.total_frames = total_frames
         dialog.title("Exporting MP4")
         dialog.transient(self.parent)
         dialog.grab_set()
@@ -755,17 +788,13 @@ class SequencePanel:
         if process is None or process.poll() is not None:
             dialog.destroy()
             return
-        try:
+        with contextlib.suppress(OSError, ProcessLookupError):
             process.terminate()
-        except Exception:
-            pass
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            try:
+            with contextlib.suppress(OSError, ProcessLookupError):
                 process.kill()
-            except Exception:
-                pass
             process.wait(timeout=5)
 
     def _handle_ffmpeg_finish(
@@ -839,12 +868,12 @@ class SequencePanel:
             dialog.after(
                 0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir
             )
-        except Exception:
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             dialog.after(
                 0, self._handle_ffmpeg_finish, dialog, process, output_path, temp_dir
             )
 
-    def _export_sequence_video(self) -> None:
+    def _export_sequence_video(self) -> None:  # noqa: C901, PLR0912, PLR0915
         if self.controller is None:
             return
         seq = getattr(self.controller, "current_sequence", None)
@@ -919,7 +948,7 @@ class SequencePanel:
                         dialog, source_progress, "Generating source frames..."
                     )
                     dialog.update_idletasks()
-                except Exception:
+                except (AttributeError, OSError, TypeError, ValueError):
                     continue
 
             if not frame_paths:
@@ -934,7 +963,10 @@ class SequencePanel:
 
             self._append_ffmpeg_output(
                 dialog,
-                f"Built {len(frame_paths)} source frames; preparing fades and export list...",
+                (
+                    f"Built {len(frame_paths)} source frames; "
+                    "preparing fades and export list..."
+                ),
             )
             self._set_export_progress(dialog, 35.0, "Preparing ffmpeg export...")
             dialog.update_idletasks()
@@ -1042,7 +1074,7 @@ class SequencePanel:
                 command=lambda: self._play_exported_video(output_path)
             )
             try:
-                process = subprocess.Popen(
+                process = subprocess.Popen(  # noqa: S603
                     ffmpeg_cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -1069,7 +1101,7 @@ class SequencePanel:
                 "WM_DELETE_WINDOW",
                 lambda: self._cancel_ffmpeg_process(dialog, dialog._process),
             )
-        except Exception:
+        except (OSError, RuntimeError, TypeError, ValueError):
             shutil.rmtree(temp_dir, ignore_errors=True)
             messagebox.showerror(
                 "Export video",
@@ -1090,7 +1122,7 @@ class SequencePanel:
         # try to get a cached photo (placeholder or real) from thumbnail_cache
         try:
             self._drag_photo = self._load_photo(slide, (120, 80))
-        except Exception:
+        except (AttributeError, OSError, TypeError, ValueError):
             self._drag_photo = None
         self._create_ghost(event)
 
@@ -1109,7 +1141,7 @@ class SequencePanel:
         path = seq.items[index]
         try:
             self._drag_photo = self._load_photo(path, (120, 80))
-        except Exception:
+        except (AttributeError, OSError, TypeError, ValueError):
             self._drag_photo = None
         self._create_ghost(event)
 
@@ -1124,31 +1156,23 @@ class SequencePanel:
         root = self.parent.winfo_toplevel()
         if root is None:
             return
-        try:
+        with contextlib.suppress(tk.TclError, AttributeError):
             root.unbind("<B1-Motion>")
-        except Exception:
-            pass
-        try:
+        with contextlib.suppress(tk.TclError, AttributeError):
             root.unbind("<ButtonRelease-1>")
-        except Exception:
-            pass
 
     def _create_ghost(self, event: tk.Event) -> None:
         if self._drag_ghost is not None:
-            try:
+            with contextlib.suppress(tk.TclError, AttributeError):
                 self._drag_ghost.destroy()
-            except Exception:
-                pass
         self._drag_ghost = tk.Toplevel(self.parent.winfo_toplevel())
         self._drag_ghost.overrideredirect(True)
         if self._drag_photo is not None:
             ttk.Label(self._drag_ghost, image=self._drag_photo).pack()
         else:
             ttk.Label(self._drag_ghost, text="img").pack()
-        try:
+        with contextlib.suppress(tk.TclError, AttributeError):
             self._drag_ghost.geometry(f"+{event.x_root+8}+{event.y_root+8}")
-        except Exception:
-            pass
 
     def _sequence_drop_index_for_event(self, event: tk.Event) -> int:
         if self._sequence_canvas is None:
@@ -1160,7 +1184,7 @@ class SequencePanel:
             canvas_x = self._sequence_canvas.canvasx(
                 event.x_root - self._sequence_canvas.winfo_rootx()
             )
-        except Exception:
+        except (AttributeError, TypeError, ValueError, tk.TclError):
             canvas_x = 0.0
 
         slot_w = 140
@@ -1199,7 +1223,7 @@ class SequencePanel:
             canvas_x = self._sequence_canvas.canvasx(
                 event.x_root - self._sequence_canvas.winfo_rootx()
             )
-        except Exception:
+        except (AttributeError, TypeError, ValueError, tk.TclError):
             canvas_x = 0.0
 
         x = insertion_points[
@@ -1227,10 +1251,8 @@ class SequencePanel:
             self._sequence_canvas is not None
             and self._sequence_drop_cursor_id is not None
         ):
-            try:
+            with contextlib.suppress(tk.TclError):
                 self._sequence_canvas.delete(self._sequence_drop_cursor_id)
-            except tk.TclError:
-                pass
             self._sequence_drop_cursor_id = None
 
     def _is_event_in_source_panel(self, event: tk.Event) -> bool:
@@ -1241,7 +1263,7 @@ class SequencePanel:
             y0 = self._source_canvas.winfo_rooty()
             x1 = x0 + self._source_canvas.winfo_width()
             y1 = y0 + self._source_canvas.winfo_height()
-        except Exception:
+        except (AttributeError, tk.TclError):
             return False
         return x0 <= event.x_root <= x1 and y0 <= event.y_root <= y1
 
@@ -1275,11 +1297,25 @@ class SequencePanel:
 
     def _hide_source_trash_cursor(self) -> None:
         if self._source_canvas is not None and self._source_trash_cursor_id is not None:
-            try:
+            with contextlib.suppress(tk.TclError):
                 self._source_canvas.delete(self._source_trash_cursor_id)
-            except tk.TclError:
-                pass
             self._source_trash_cursor_id = None
+
+    def _destroy_drag_ghost(self) -> None:
+        if self._drag_ghost is None:
+            return
+        with contextlib.suppress(tk.TclError, AttributeError):
+            self._drag_ghost.destroy()
+        self._drag_ghost = None
+
+    def _reset_drag_state(self) -> None:
+        self._drag_photo = None
+        self._dragging = False
+        self._drag_moved = False
+        self._pending_drag_source = None
+        self._drag_source_path = None
+        self._drag_from_index = None
+        self._unbind_drag_root_events()
 
     def _on_drag_motion(self, event: tk.Event) -> None:
         if not self._dragging and self._pending_drag_source is not None:
@@ -1295,34 +1331,16 @@ class SequencePanel:
         self._update_source_trash_cursor(event)
         if self._drag_ghost is None:
             return
-        try:
+        with contextlib.suppress(AttributeError, tk.TclError):
             self._drag_ghost.geometry(f"+{event.x_root+8}+{event.y_root+8}")
-        except Exception:
-            pass
 
-    def _end_drag(self, event: tk.Event) -> None:
-        if not self._dragging:
-            return
-        self._hide_sequence_drop_cursor()
-        self._hide_source_trash_cursor()
-        if not self._drag_moved:
-            if self._drag_from_index is None and self._drag_source_path is not None:
-                self._select_source_slide(SlideItem(self._drag_source_path))
-            if self._drag_ghost is not None:
-                try:
-                    self._drag_ghost.destroy()
-                except Exception:
-                    pass
-            self._drag_ghost = None
-            self._drag_photo = None
-            self._dragging = False
-            self._drag_moved = False
-            self._pending_drag_source = None
-            self._drag_source_path = None
-            self._drag_from_index = None
-            self._unbind_drag_root_events()
-            return
-        # determine drop index based on the visible canvas x-position, not the raw screen x
+    def _handle_unmoved_drag(self) -> None:
+        if self._drag_from_index is None and self._drag_source_path is not None:
+            self._select_source_slide(SlideItem(self._drag_source_path))
+        self._destroy_drag_ghost()
+        self._reset_drag_state()
+
+    def _drop_index_for_event(self, event: tk.Event) -> int:
         drop_index = 0
         try:
             canvas = self._sequence_canvas
@@ -1339,9 +1357,11 @@ class SequencePanel:
                         int((canvas_x - 4) // slot_w),
                     ),
                 )
-        except Exception:
+        except (AttributeError, TypeError, ValueError, tk.TclError):
             drop_index = 0
-        # if came from source
+        return drop_index
+
+    def _apply_drag_drop(self, event: tk.Event, drop_index: int) -> None:
         if self._drag_from_index is None and self._drag_source_path is not None:
             if (
                 not hasattr(self.controller, "current_sequence")
@@ -1352,29 +1372,34 @@ class SequencePanel:
                 self.controller.current_sequence.items.insert(
                     drop_index, self._drag_source_path
                 )
-        elif self._drag_from_index is not None:
-            # reorder within sequence or remove the dragged item when dropped over the source panel
-            seq = getattr(self.controller, "current_sequence", None)
-            if seq is not None and 0 <= self._drag_from_index < len(seq.items):
-                if self._is_event_in_source_panel(event):
-                    seq.items.pop(self._drag_from_index)
-                else:
-                    item = seq.items.pop(self._drag_from_index)
-                    idx = max(0, min(drop_index, len(seq.items)))
-                    seq.items.insert(idx, item)
-        # cleanup
-        if self._drag_ghost is not None:
-            try:
-                self._drag_ghost.destroy()
-            except Exception:
-                pass
-        self._drag_ghost = None
-        self._drag_photo = None
-        self._dragging = False
-        self._drag_moved = False
-        self._pending_drag_source = None
-        self._drag_source_path = None
-        self._drag_from_index = None
-        self._unbind_drag_root_events()
-        # refresh panels
+            return
+
+        if self._drag_from_index is None:
+            return
+
+        seq = getattr(self.controller, "current_sequence", None)
+        if seq is None or not 0 <= self._drag_from_index < len(seq.items):
+            return
+
+        if self._is_event_in_source_panel(event):
+            seq.items.pop(self._drag_from_index)
+            return
+
+        item = seq.items.pop(self._drag_from_index)
+        idx = max(0, min(drop_index, len(seq.items)))
+        seq.items.insert(idx, item)
+
+    def _end_drag(self, event: tk.Event) -> None:
+        if not self._dragging:
+            return
+        self._hide_sequence_drop_cursor()
+        self._hide_source_trash_cursor()
+        if not self._drag_moved:
+            self._handle_unmoved_drag()
+            return
+
+        drop_index = self._drop_index_for_event(event)
+        self._apply_drag_drop(event, drop_index)
+        self._destroy_drag_ghost()
+        self._reset_drag_state()
         self.refresh()

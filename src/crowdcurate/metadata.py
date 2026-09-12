@@ -1,15 +1,20 @@
+# ruff: noqa: D100, D101, D102
+
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import logging
 import shutil
 import tkinter as tk
 import xml.etree.ElementTree as ET
 from datetime import datetime
-from pathlib import Path
 from tkinter import font as tkfont
 from tkinter import ttk
 from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 import piexif
 from PIL import Image
@@ -66,7 +71,7 @@ def _indent_xml(elem: ET.Element, level: int = 0) -> str:
 
 
 class MetadataWindow:
-    def __init__(self, parent: Any) -> None:
+    def __init__(self, parent: tk.Misc) -> None:
         self.parent = parent
         self.frame = ttk.Frame(self.parent, width=320)
         self._font_size = 12
@@ -216,7 +221,7 @@ class MetadataWindow:
     @staticmethod
     def _compute_sha256(path: Path) -> str:
         sha256_hash = hashlib.sha256()
-        with open(path, "rb") as file_obj:
+        with path.open("rb") as file_obj:
             for byte_block in iter(lambda: file_obj.read(4096), b""):
                 sha256_hash.update(byte_block)
         return sha256_hash.hexdigest()
@@ -225,7 +230,7 @@ class MetadataWindow:
 class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
     """Dialog window for viewing and editing EXIF and IPTC metadata."""
 
-    def __init__(self, parent: Any, file_path: Path) -> None:
+    def __init__(self, parent: tk.Misc, file_path: Path) -> None:
         self.parent = parent
         self.file_path = file_path
         self.exif_data: dict[str, Any] = {}
@@ -248,7 +253,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
             for ifd_name in ("0th", "Exif", "GPS", "1st"):
                 ifd = self.exif_data.get(ifd_name)
                 if ifd:
-                    for tag_id in ifd.keys():
+                    for tag_id in ifd:
                         try:
                             tag_type = piexif.TAGS[ifd_name][tag_id]["type"]
                             self.tag_types[(ifd_name, tag_id)] = tag_type
@@ -429,18 +434,13 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
         if not hasattr(self, "dialog"):
             return
         self.status_label.config(text=message, foreground=color)
-        try:
+        with contextlib.suppress(tk.TclError):
             self.dialog.update_idletasks()
-        except tk.TclError:
-            # Dialog may have been destroyed
-            pass
 
         # Auto-clear after timeout if specified
         if timeout_ms > 0 and hasattr(self, "dialog"):
-            try:
+            with contextlib.suppress(tk.TclError):
                 self.dialog.after(timeout_ms, lambda: self._set_status("Ready", "gray"))
-            except tk.TclError:
-                pass
 
     def _load_xmp(self) -> None:
         """Extract XMP data from the image file."""
@@ -459,15 +459,15 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                             self.xmp_data = xmp_data.decode("utf-8", errors="ignore")
                 except (OSError, ValueError):
                     pass
-        except Exception:  # pylint: disable=broad-except
+        except (AttributeError, OSError, RuntimeError, TypeError, ValueError):
             logger.debug("XMP is optional, skipping failed load", exc_info=True)
 
-    def _extract_xmp_from_jpeg(
+    def _extract_xmp_from_jpeg(  # noqa: C901, PLR0912
         self,
-    ) -> str:  # pylint: disable=too-many-branches,too-many-nested-blocks  # noqa: C901
+    ) -> str:
         """Extract XMP data from JPEG APP1 marker."""
         try:
-            with open(self.file_path, "rb") as f:
+            with self.file_path.open("rb") as f:
                 data = f.read()
 
             # Look for JPEG APP1 marker (FFE1)
@@ -570,14 +570,14 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                 self._update_xmp_in_png(xmp_content)
         except ET.ParseError as exc:
             error_msg = f"Invalid XMP XML format: {exc}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             self._set_status(f"✗ {error_msg}", "red", 5000)
             raise ValueError(error_msg) from exc
 
     def _update_xmp_in_jpeg(self, xmp_content: str) -> None:
         """Update XMP in JPEG file."""
         try:
-            with open(self.file_path, "rb") as f:
+            with self.file_path.open("rb") as f:
                 data = bytearray(f.read())
 
             # Remove existing XMP APP1 marker if present
@@ -594,8 +594,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                         xmp_end = i + length + 2
                         del data[xmp_start:xmp_end]
                         break
-                    else:
-                        i += length + 2
+                    i += length + 2
                 else:
                     i += 1
 
@@ -607,13 +606,14 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
             app1_marker = b"\xff\xe1" + app1_length.to_bytes(2, "big") + app1_content
 
             # Insert after SOI marker (first two bytes)
-            if len(data) > 2 and data[0:2] == b"\xff\xd8":
-                data[2:2] = app1_marker
+            jpeg_soi_size = 2
+            if len(data) > jpeg_soi_size and data[0:jpeg_soi_size] == b"\xff\xd8":
+                data[jpeg_soi_size:jpeg_soi_size] = app1_marker
 
-            with open(self.file_path, "wb") as f:
+            with self.file_path.open("wb") as f:
                 f.write(data)
         except OSError as exc:
-            logger.error("Failed to update JPEG XMP: %s", exc)
+            logger.exception("Failed to update JPEG XMP")
             raise OSError(str(exc)) from exc
 
     def _update_xmp_in_png(self, xmp_content: str) -> None:
@@ -623,9 +623,9 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                 info = img.info.copy()
                 info["XMP"] = xmp_content.encode("utf-8")
                 # Ensure mapping keys are str for PIL save kwargs
-                img.save(self.file_path, **cast(dict[str, Any], info))
+                img.save(self.file_path, **cast("dict[str, Any]", info))
         except OSError as exc:
-            logger.error("Failed to update PNG XMP: %s", exc)
+            logger.exception("Failed to update PNG XMP")
             raise OSError(str(exc)) from exc
 
     def _save_metadata(self) -> None:
@@ -657,7 +657,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
             self._set_status("✓ Metadata saved successfully!", "green", 3000)
         except (OSError, ValueError) as exc:
             error_msg = f"Failed to save metadata: {exc}"
-            logger.error(error_msg)
+            logger.exception(error_msg)
             self._set_status(f"✗ {error_msg}", "red", 5000)
 
     def _parse_exif_text(self, text: str) -> dict[str, Any]:
@@ -665,17 +665,17 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
         result: dict[str, Any] = {}
         current_ifd = ""
 
-        for line in text.split("\n"):
-            line = line.strip()
-            if not line or line.startswith("#"):
+        for raw_line in text.split("\n"):
+            stripped_line = raw_line.strip()
+            if not stripped_line or stripped_line.startswith("#"):
                 continue
-            if line.startswith("[") and line.endswith("]"):
-                current_ifd = line[1:-1]
+            if stripped_line.startswith("[") and stripped_line.endswith("]"):
+                current_ifd = stripped_line[1:-1]
                 if current_ifd not in result:
                     result[current_ifd] = {}
                 continue
-            if "=" in line and current_ifd:
-                key, value = line.split("=", 1)
+            if "=" in stripped_line and current_ifd:
+                key, value = stripped_line.split("=", 1)
                 key = key.strip()
                 value = value.strip()
                 map_key = f"{current_ifd}:{key}"
@@ -688,7 +688,9 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
                 result[ifd_name][tag_id] = converted_value
         return result
 
-    def _convert_exif_value(self, ifd_name: str, tag_id: int, value_str: str) -> Any:
+    def _convert_exif_value(
+        self, ifd_name: str, tag_id: int, value_str: str
+    ) -> bytes | str | int | tuple[int, int]:
         """Convert a string value to the appropriate EXIF data type."""
         tag_type = self.tag_types.get((ifd_name, tag_id), EXIF_TYPE_ASCII)
         if tag_type in (EXIF_TYPE_BYTE, EXIF_TYPE_ASCII, EXIF_TYPE_UNDEFINED):
@@ -716,7 +718,7 @@ class ExifEditorWindow:  # pylint: disable=too-many-instance-attributes
         except ValueError:
             return (1, 1)
 
-    def _int_or_bytes(self, value_str: str) -> Any:
+    def _int_or_bytes(self, value_str: str) -> int | bytes | str:
         try:
             return int(value_str)
         except ValueError:

@@ -1,12 +1,19 @@
+# ruff: noqa: D100, D101, D102
+
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import contextlib
+import queue
+import threading
 import tkinter as tk
-from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor
+from typing import TYPE_CHECKING
 
 from PIL import Image, ImageTk
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .model import SlideItem
 
 
@@ -43,8 +50,9 @@ class ImageCache:
 
 
 class ThumbnailCache:
-    """Threaded thumbnail cache that loads PIL images in background and creates
-    ImageTk.PhotoImage objects on the Tk main thread.
+    """Threaded thumbnail cache that loads PIL images in background.
+
+    ImageTk.PhotoImage objects are generated on the Tk main thread.
 
     Usage:
       thumb = thumbnail_cache.get_photo(path, max_size=(120,80), on_ready=callback)
@@ -57,12 +65,8 @@ class ThumbnailCache:
         self,
         root: tk.Misc | None = None,
         max_workers: int = 4,
-        placeholder_size=(120, 80),
+        placeholder_size: tuple[int, int] = (120, 80),
     ) -> None:
-        import queue
-        import threading
-        from concurrent.futures import ThreadPoolExecutor
-
         self.root = root
         self._cache: dict[str, ImageTk.PhotoImage] = {}
         self._loading: set[str] = set()
@@ -81,10 +85,9 @@ class ThumbnailCache:
     def _make_placeholder(self) -> ImageTk.PhotoImage | None:
         if self.root is None:
             return None
-        try:
+        with contextlib.suppress(AttributeError, RuntimeError, TypeError, ValueError):
             return ImageTk.PhotoImage(self._placeholder.copy())
-        except Exception:
-            return None
+        return None
 
     def _schedule_queue_flush(self) -> None:
         if (
@@ -94,23 +97,22 @@ class ThumbnailCache:
         ):
             return
         self._queue_flush_scheduled = True
-        try:
+        with contextlib.suppress(AttributeError, RuntimeError, tk.TclError, TypeError):
             self.root.after(0, self._drain_queue)
-        except Exception:
-            self._queue_flush_scheduled = False
+        self._queue_flush_scheduled = False
 
     def _drain_queue(self) -> None:
         self._queue_flush_scheduled = False
         while True:
             try:
                 key, path, img, placeholder, on_ready = self._queue.get_nowait()
-            except Exception:
+            except queue.Empty:
                 break
             photo = placeholder
             try:
                 if img is not None:
                     photo = ImageTk.PhotoImage(img)
-            except Exception:
+            except (AttributeError, RuntimeError, TypeError, ValueError):
                 photo = placeholder
             with self._lock:
                 self._cache[key] = photo
@@ -122,10 +124,10 @@ class ThumbnailCache:
                 callbacks.append(on_ready)
             callbacks.extend(pending)
             for callback in callbacks:
-                try:
+                with contextlib.suppress(
+                    AttributeError, RuntimeError, TypeError, ValueError
+                ):
                     callback(path, photo)
-                except Exception:
-                    pass
         if (
             not self._queue.empty()
             and self.root is not None
@@ -134,13 +136,14 @@ class ThumbnailCache:
             self._schedule_queue_flush()
 
     def shutdown(self) -> None:
-        try:
+        with contextlib.suppress(AttributeError, RuntimeError, ValueError, OSError):
             self._executor.shutdown(wait=True, cancel_futures=True)
-        except Exception:
-            pass
 
     def get_photo(
-        self, path: Path, max_size=(120, 80), on_ready=None
+        self,
+        path: Path,
+        max_size: tuple[int, int] = (120, 80),
+        on_ready: object | None = None,
     ) -> ImageTk.PhotoImage | None:
         key = str(path)
         with self._lock:
@@ -159,7 +162,7 @@ class ThumbnailCache:
             try:
                 img = Image.open(path)
                 img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            except Exception:
+            except (OSError, RuntimeError, TypeError, ValueError):
                 img = None
             self._queue.put((key, path, img, placeholder, on_ready))
             self._schedule_queue_flush()
@@ -168,11 +171,11 @@ class ThumbnailCache:
         return placeholder
 
     def get_thumbnail(
-        self, slide: "SlideItem", max_size: tuple[int, int] = (160, 160)
-    ) -> "Image.Image":
+        self, slide: SlideItem, max_size: tuple[int, int] = (160, 160)
+    ) -> Image.Image:
         try:
             img = Image.open(slide.source)
-            img.thumbnail(max_size, Image.Resampling.LANCZOS)
-            return img
-        except Exception:
+        except (OSError, ValueError):
             return Image.new("RGB", max_size, (200, 200, 200))
+        img.thumbnail(max_size, Image.Resampling.LANCZOS)
+        return img

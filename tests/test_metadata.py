@@ -1,3 +1,5 @@
+# ruff: noqa: RUF015, PT011, SIM105
+
 """Tests for metadata window and EXIF editor."""
 
 # pylint: disable=protected-access, redefined-outer-name

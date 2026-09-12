@@ -1,3 +1,5 @@
+"""Application entry-point for running the CrowdCurate slideshow."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,6 +12,7 @@ from .view import SlideshowView
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the slideshow app."""
     parser = argparse.ArgumentParser(
         prog="crowdcurate",
         description=(
@@ -40,6 +43,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Launch the CrowdCurate slideshow UI."""
     args = parse_args(argv)
     directories = [Path(path).expanduser() for path in args.directories]
     deck = SlideDeck(directories)

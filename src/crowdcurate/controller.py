@@ -1,32 +1,34 @@
+# ruff: noqa: D100, D101, D102
+
 from __future__ import annotations
 
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
-from .cache import ImageCache
-from .cache import ThumbnailCache
-from .model import SlideDeck
-from .sequence import SequenceStore, Sequence
+from .cache import ImageCache, ThumbnailCache
+from .sequence import Sequence, SequenceStore
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
+    from .model import SlideDeck, SlideItem
     from .view import SlideshowView
 
 
 class SlideshowController:
     def __init__(
-        self, deck: SlideDeck, view: "SlideshowView", interval_seconds: float = 5.0
+        self, deck: SlideDeck, view: SlideshowView, interval_seconds: float = 5.0
     ) -> None:
         self.deck = deck
         self.view = view
         self.interval_seconds = interval_seconds
         self._playing = False
-        self._after_id: Any | None = None
-        self._preload_id: Any | None = None
+        self._after_id: int | None = None
+        self._preload_id: int | None = None
         self.cache = ImageCache(max_size=3)
         # thumbnail cache for UI strips (background loader)
         try:
             self.thumbnail_cache = ThumbnailCache(self.view.root)
-        except Exception:
+        except (AttributeError, RuntimeError, TypeError, ValueError):
             # fallback if root isn't available
             self.thumbnail_cache = ThumbnailCache(None)
         # sequence support (lazy, minimal)
@@ -172,13 +174,13 @@ class SlideshowController:
             self.view.show_placeholder("Image not found")
 
     # Minimal sequence helper for view integration
-    def get_source_slides(self):
+    def get_source_slides(self) -> list[SlideItem]:
         return list(self.deck.slides)
 
     def create_sequence(self, name: str) -> None:
         self.current_sequence = Sequence(name=name, items=[])
 
-    def insert_into_sequence(self, index: int, path: "Path") -> None:
+    def insert_into_sequence(self, index: int, path: Path) -> None:
         if self.current_sequence is None:
             self.create_sequence("Untitled")
         idx = max(0, min(index, len(self.current_sequence.items)))
@@ -205,7 +207,7 @@ class SlideshowController:
             return
         self.current_sequence.items.clear()
 
-    def save_sequence(self, name: str | None = None):
+    def save_sequence(self, name: str | None = None) -> Path | None:
         if self.current_sequence is None:
             return None
         if name:
