@@ -5,8 +5,11 @@ from __future__ import annotations
 import contextlib
 import shlex
 import subprocess
+import sys
+import threading
 import time
 import tkinter as tk
+import traceback
 from collections.abc import Callable
 from tkinter import messagebox, simpledialog, ttk
 from typing import TYPE_CHECKING
@@ -76,7 +79,7 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
             ),
             "next": ttk.Button(self.controls_frame, text="Next", command=self._on_next),
             "quit": ttk.Button(
-                self.controls_frame, text="Quit", command=self.root.quit
+                self.controls_frame, text="Quit", command=self._on_close
             ),
         }
 
@@ -248,8 +251,41 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
         if after_id is not None:
             self.root.after_cancel(after_id)
 
+    def _debug_dump_threads(self, label: str) -> None:
+        """Print a brief thread summary for shutdown troubleshooting."""
+        print(f"\n=== {label} @ {time.monotonic():.3f}s ===")
+        for thread in threading.enumerate():
+            print(f"THREAD: {thread.name} daemon={thread.daemon}")
+            if thread is threading.current_thread():
+                print("".join(traceback.format_stack(limit=8)))
+            else:
+                frame = sys._current_frames().get(thread.ident)
+                if frame is not None:
+                    print("".join(traceback.format_stack(frame, limit=8)))
+
+    def _on_close(self) -> None:
+        """Close the app and log shutdown state to diagnose slow exits."""
+        print(f"CROWD CURATE CLOSE: start at {time.monotonic():.3f}s")
+        if self._controller is not None:
+            print("CROWD CURATE CLOSE: stopping controller")
+            self._controller.stop()
+            cache = getattr(self._controller, "thumbnail_cache", None)
+            if cache is not None:
+                print("CROWD CURATE CLOSE: shutting down thumbnail cache")
+                cache.shutdown()
+                print("CROWD CURATE CLOSE: thumbnail cache shut down")
+        print("CROWD CURATE CLOSE: pending Tk after jobs:")
+        try:
+            print(self.root.tk.call("after", "info"))
+        except (AttributeError, RuntimeError, TypeError, tk.TclError):
+            print("CROWD CURATE CLOSE: unable to list after jobs")
+        self._debug_dump_threads("before destroy")
+        self.root.destroy()
+        print(f"CROWD CURATE CLOSE: destroy called at {time.monotonic():.3f}s")
+
     def run(self) -> None:
         """Start the Tk main loop."""
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.mainloop()
 
     def _resize_image(self, image: Image.Image) -> Image.Image:

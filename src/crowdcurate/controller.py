@@ -128,8 +128,18 @@ class SlideshowController:
         if self._after_id is not None:
             self.view.cancel_scheduled(self._after_id)
             self._after_id = None
+        if self._preload_id is not None:
+            self.view.cancel_scheduled(self._preload_id)
+            self._preload_id = None
         self._playing = False
         self.view.update_play_button(self._playing)
+
+    def shutdown(self) -> None:
+        """Stop scheduled work and shut down embedded background resources."""
+        self.stop()
+        cache = getattr(self, "thumbnail_cache", None)
+        if cache is not None:
+            cache.shutdown()
 
     def _schedule_next(self) -> None:
         if self._after_id is not None:
