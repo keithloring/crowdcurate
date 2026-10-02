@@ -274,6 +274,11 @@ class SlideshowView:  # pylint: disable=too-many-instance-attributes
                 print("CROWD CURATE CLOSE: shutting down thumbnail cache")
                 cache.shutdown()
                 print("CROWD CURATE CLOSE: thumbnail cache shut down")
+        # Shutdown sequence panel early to release PhotoImage resources
+        if self._sequence_panel is not None:
+            print("CROWD CURATE CLOSE: shutting down sequence panel")
+            self._sequence_panel.shutdown()
+            print("CROWD CURATE CLOSE: sequence panel shut down")
         print("CROWD CURATE CLOSE: pending Tk after jobs:")
         try:
             print(self.root.tk.call("after", "info"))

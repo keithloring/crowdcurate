@@ -900,6 +900,47 @@ def test_shift_click_selects_range():
         root.destroy()
 
 
+def test_sequence_panel_shutdown_clears_photo_references():
+    """TDD: shutdown() should clear all photo references for fast cleanup."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+
+            def get_source_slides(self):
+                return []
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+
+        # Simulate adding some photos to the collections
+        dummy_photo = ImageTk.PhotoImage(Image.new("RGB", (10, 10), "red"))
+        panel._source_photos.append(dummy_photo)
+        panel._sequence_photos.append(dummy_photo)
+        panel._source_widgets["key1"] = tk.Label(root)
+        panel._source_widget_ids["key1"] = 1
+
+        # Verify collections are populated
+        assert len(panel._source_photos) == 1
+        assert len(panel._sequence_photos) == 1
+        assert len(panel._source_widgets) == 1
+        assert len(panel._source_widget_ids) == 1
+
+        # Call shutdown
+        panel.shutdown()
+
+        # Verify all collections are cleared
+        assert len(panel._source_photos) == 0
+        assert len(panel._sequence_photos) == 0
+        assert len(panel._source_widgets) == 0
+        assert len(panel._source_widget_ids) == 0
+    finally:
+        root.destroy()
+
+
 def test_shift_click_range_works_backwards():
     """TDD: Shift+Click should work when clicking backwards (higher anchor to lower index)."""
     root = tk.Tk()

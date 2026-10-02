@@ -220,6 +220,16 @@ class SequencePanel:
             ):
                 self._sequence_canvas.xview_moveto(self._sequence_scroll_pos)
 
+    def shutdown(self) -> None:
+        """Clean up resources for fast application shutdown."""
+        # Clear all photo references to allow tkinter cleanup
+        self._source_photos.clear()
+        self._sequence_photos.clear()
+        self._drag_photo = None
+        # Clear widget references
+        self._source_widgets.clear()
+        self._source_widget_ids.clear()
+
     def _load_photo(
         self, source: Path | SlideItem, max_size: tuple[int, int]
     ) -> ImageTk.PhotoImage | None:
