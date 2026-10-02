@@ -114,6 +114,9 @@ class SequencePanel:
         self._source_widgets: dict[str, tk.Label] = {}
         self._source_widget_ids: dict[str, int] = {}
         self._last_source_selection_key: str | None = None
+        # multi-select state
+        self._source_selected_keys: set[str] = set()
+        self._source_selection_anchor_key: str | None = None
 
         # drag state
         self._dragging = False
@@ -122,6 +125,8 @@ class SequencePanel:
         self._drag_photo: ImageTk.PhotoImage | None = None
         self._drag_ghost: tk.Toplevel | None = None
         self._drag_source_path: Path | None = None
+        # multi-select drag support
+        self._drag_source_paths: list[Path] = []
         self._drag_from_index: int | None = None
         self._sequence_drop_cursor_id: int | None = None
         self._source_trash_cursor_id: int | None = None
@@ -298,7 +303,12 @@ class SequencePanel:
     def _update_source_selection_state(self) -> None:
         selected_key = self._current_source_key()
         for path_key, label in self._source_widgets.items():
-            is_selected = path_key == selected_key
+            is_multi_selected = path_key in self._source_selected_keys
+            # Check: multi-select active OR is current playing slide
+            is_current_slide = (
+                path_key == selected_key and not self._source_selected_keys
+            )
+            is_selected = is_multi_selected or is_current_slide
             label.configure(
                 bd=2 if is_selected else 0,
                 relief="solid" if is_selected else "flat",
@@ -342,7 +352,94 @@ class SequencePanel:
         if self._source_canvas is not None:
             self._scroll_source_selection_into_view()
 
-    def _populate_source(self) -> None:  # noqa: C901
+    def _get_selected_source_paths(self) -> list[Path]:
+        """Return a list of Path objects for all currently selected source items."""
+        if self.controller is None:
+            return []
+        slides = (
+            self.controller.get_source_slides()
+            if hasattr(self.controller, "get_source_slides")
+            else []
+        )
+
+        selected_paths = []
+        for slide in slides:
+            try:
+                slide_key = str(slide.source.resolve())
+            except (OSError, RuntimeError, ValueError):
+                slide_key = str(slide.source)
+            if slide_key in self._source_selected_keys:
+                selected_paths.append(slide.source)
+        return selected_paths
+
+    def _make_click_key(self, slide: SlideItem) -> str:
+        """Extract slide key with consistent error handling."""
+        try:
+            return str(slide.source.resolve())
+        except (OSError, RuntimeError, ValueError):
+            return str(slide.source)
+
+    def _handle_ctrl_click(self, click_key: str) -> None:
+        """Handle Ctrl+Click: toggle item in multi-select set."""
+        if click_key in self._source_selected_keys:
+            self._source_selected_keys.discard(click_key)
+        else:
+            self._source_selected_keys.add(click_key)
+        self._source_selection_anchor_key = click_key
+        self._update_source_selection_state()
+
+    def _handle_shift_click(self, click_key: str) -> None:
+        """Handle Shift+Click: select range from anchor to current."""
+        if self._source_selection_anchor_key is None:
+            return
+        slides = (
+            self.controller.get_source_slides()
+            if hasattr(self.controller, "get_source_slides")
+            else []
+        )
+        anchor_index = None
+        click_index = None
+        for idx, slide in enumerate(slides):
+            slide_key = self._make_click_key(slide)
+            if slide_key == self._source_selection_anchor_key:
+                anchor_index = idx
+            if slide_key == click_key:
+                click_index = idx
+
+        if anchor_index is not None and click_index is not None:
+            start = min(anchor_index, click_index)
+            end = max(anchor_index, click_index)
+            self._source_selected_keys.clear()
+            for idx in range(start, end + 1):
+                slide_key = self._make_click_key(slides[idx])
+                self._source_selected_keys.add(slide_key)
+            self._update_source_selection_state()
+
+    def _on_source_click(self, event: tk.Event, s: SlideItem) -> None:
+        """Handle source thumbnail click with Ctrl/Shift support."""
+        click_key = self._make_click_key(s)
+
+        if event.state & 0x0004:  # Ctrl mask
+            self._handle_ctrl_click(click_key)
+            return
+
+        if event.state & 0x0001:  # Shift mask
+            self._handle_shift_click(click_key)
+            return
+
+        # Regular click: depends on whether item is already selected
+        if click_key in self._source_selected_keys:
+            # Clicking already-selected: preserve selection, allow drag
+            self._pending_drag_source = s
+            self._source_selection_anchor_key = click_key
+        else:
+            # Clicking unselected: clear selection and select only this one
+            self._source_selected_keys.clear()
+            self._source_selection_anchor_key = click_key
+            self._pending_drag_source = s
+            self._select_source_slide(s)
+
+    def _populate_source(self) -> None:
         if self._source_canvas is None or self.controller is None:
             return
         old_scroll = self._source_canvas.xview()[0]
@@ -399,11 +496,10 @@ class SequencePanel:
                     on_ready=make_on_ready(lbl),
                 )
 
-            def _on_source_click(_event: tk.Event, s: SlideItem = slide) -> None:
-                self._pending_drag_source = s
-                self._select_source_slide(s)
-
-            lbl.bind("<ButtonPress-1>", _on_source_click)
+            lbl.bind(
+                "<ButtonPress-1>",
+                lambda _event, s=slide: self._on_source_click(_event, s),
+            )
             lbl.bind("<B1-Motion>", self._on_drag_motion)
             lbl.bind("<ButtonRelease-1>", self._end_drag)
             x += 126 + padding
@@ -1116,7 +1212,15 @@ class SequencePanel:
         self._dragging = True
         self._drag_moved = False
         self._pending_drag_source = None
-        self._drag_source_path = slide.source
+
+        # Drag all selected or just this one
+        if self._source_selected_keys:
+            self._drag_source_paths = self._get_selected_source_paths()
+            self._drag_source_path = None  # Indicate multi-item drag
+        else:
+            self._drag_source_path = slide.source
+            self._drag_source_paths = []
+
         self._drag_from_index = None
         self._bind_drag_root_events()
         # try to get a cached photo (placeholder or real) from thumbnail_cache
@@ -1314,6 +1418,7 @@ class SequencePanel:
         self._drag_moved = False
         self._pending_drag_source = None
         self._drag_source_path = None
+        self._drag_source_paths = []
         self._drag_from_index = None
         self._unbind_drag_root_events()
 
@@ -1362,18 +1467,28 @@ class SequencePanel:
         return drop_index
 
     def _apply_drag_drop(self, event: tk.Event, drop_index: int) -> None:
-        if self._drag_from_index is None and self._drag_source_path is not None:
+        # Case 1: Dragging from source (single or multi-select)
+        has_source_path = self._drag_source_path is not None
+        has_source_paths = bool(self._drag_source_paths)
+        if self._drag_from_index is None and (has_source_path or has_source_paths):
             if (
                 not hasattr(self.controller, "current_sequence")
                 or self.controller.current_sequence is None
             ):
                 self.controller.current_sequence = Sequence(name="Untitled", items=[])
             if not self._is_event_in_source_panel(event):
-                self.controller.current_sequence.items.insert(
-                    drop_index, self._drag_source_path
+                # Insert multiple selected items or single item
+                items_to_add = (
+                    self._drag_source_paths
+                    if self._drag_source_paths
+                    else [self._drag_source_path]
                 )
+                for path in items_to_add:
+                    self.controller.current_sequence.items.insert(drop_index, path)
+                    drop_index += 1  # Increment to preserve order
             return
 
+        # Case 2: Reordering within sequence
         if self._drag_from_index is None:
             return
 

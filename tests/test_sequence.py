@@ -711,3 +711,433 @@ def test_sequence_redraw_does_not_force_nested_tk_updates():
         panel._redraw_canvas(panel._source_canvas)
     finally:
         root.destroy()
+
+
+def test_ctrl_click_toggles_source_selection():
+    """TDD: Ctrl+Click should add/remove from multi-select set."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_a.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_b.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_c.png")}
+                    )(),
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Simulate Ctrl+Click on first slide (0x0004 is Ctrl mask)
+        slide_a = controller._slides[0]
+        slide_key_a = str(slide_a.source)
+        event_a = type("Event", (), {"state": 0x0004})()
+        panel._on_source_click(event_a, s=slide_a)
+
+        assert slide_key_a in panel._source_selected_keys
+        assert len(panel._source_selected_keys) == 1
+
+        # Ctrl+Click on second slide should add to selection
+        slide_b = controller._slides[1]
+        slide_key_b = str(slide_b.source)
+        event_b = type("Event", (), {"state": 0x0004})()
+        panel._on_source_click(event_b, s=slide_b)
+
+        assert slide_key_a in panel._source_selected_keys
+        assert slide_key_b in panel._source_selected_keys
+        assert len(panel._source_selected_keys) == 2
+
+        # Ctrl+Click again on first slide should remove it
+        event_a2 = type("Event", (), {"state": 0x0004})()
+        panel._on_source_click(event_a2, s=slide_a)
+
+        assert slide_key_a not in panel._source_selected_keys
+        assert slide_key_b in panel._source_selected_keys
+        assert len(panel._source_selected_keys) == 1
+    finally:
+        root.destroy()
+
+
+def test_regular_click_clears_multi_select():
+    """TDD: Regular click (no modifier) should clear multi-select."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_a.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_b.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_c.png")}
+                    )(),
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Build multi-select
+        slide_a = controller._slides[0]
+        slide_b = controller._slides[1]
+        slide_c = controller._slides[2]
+        panel._source_selected_keys.add(str(slide_a.source))
+        panel._source_selected_keys.add(str(slide_b.source))
+
+        # Regular click (state = 0, no modifiers)
+        event = type("Event", (), {"state": 0x0000})()
+        panel._on_source_click(event, s=slide_c)
+
+        assert len(panel._source_selected_keys) == 0
+        assert controller.deck.current_index == 2
+    finally:
+        root.destroy()
+
+
+def test_shift_click_selects_range():
+    """TDD: Shift+Click should select range from anchor to current."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name(f"img_{i}.png")}
+                    )()
+                    for i in range(5)  # slides 0, 1, 2, 3, 4
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Click on slide 1 to set anchor
+        slide_1 = controller._slides[1]
+        event_1 = type("Event", (), {"state": 0x0000})()
+        panel._on_source_click(event_1, s=slide_1)
+
+        assert len(panel._source_selected_keys) == 0
+        assert controller.deck.current_index == 1
+
+        # Shift+Click on slide 4 should select range 1..4
+        slide_4 = controller._slides[4]
+        event_shift = type("Event", (), {"state": 0x0001})()  # Shift mask
+        panel._on_source_click(event_shift, s=slide_4)
+
+        # Should have slides 1, 2, 3, 4 selected
+        expected_keys = {
+            str(controller._slides[i].source) for i in range(1, 5)
+        }
+        assert panel._source_selected_keys == expected_keys
+    finally:
+        root.destroy()
+
+
+def test_shift_click_range_works_backwards():
+    """TDD: Shift+Click should work when clicking backwards (higher anchor to lower index)."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name(f"img_{i}.png")}
+                    )()
+                    for i in range(5)
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Click on slide 3 to set anchor
+        slide_3 = controller._slides[3]
+        event_3 = type("Event", (), {"state": 0x0000})()
+        panel._on_source_click(event_3, s=slide_3)
+
+        assert controller.deck.current_index == 3
+
+        # Shift+Click on slide 1 should select range 1..3
+        slide_1 = controller._slides[1]
+        event_shift = type("Event", (), {"state": 0x0001})()
+        panel._on_source_click(event_shift, s=slide_1)
+
+        expected_keys = {
+            str(controller._slides[i].source) for i in range(1, 4)
+        }
+        assert panel._source_selected_keys == expected_keys
+    finally:
+        root.destroy()
+
+
+def test_multi_select_visual_highlighting():
+    """TDD: Selected thumbnails should show visual border highlighting."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_a.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_b.png")}
+                    )(),
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Manually add slide B to selection
+        slide_b_key = str(controller._slides[1].source)
+        panel._source_selected_keys.add(slide_b_key)
+        panel._update_source_selection_state()
+
+        # Check visual state: slide B should have border
+        slide_b_widget = panel._source_widgets[slide_b_key]
+        assert slide_b_widget.cget("bd") == 2
+        assert slide_b_widget.cget("relief") == "solid"
+        assert slide_b_widget.cget("highlightthickness") == 4
+
+        # Slide A should not have the multi-select border
+        slide_a_key = str(controller._slides[0].source)
+        slide_a_widget = panel._source_widgets[slide_a_key]
+        # (unless it's the current playing slide)
+        if slide_a_key != str(controller.deck.get_current().source):
+            assert slide_a_widget.cget("bd") == 0
+            assert slide_a_widget.cget("relief") == "flat"
+    finally:
+        root.destroy()
+
+
+def test_clicking_already_selected_item_does_not_clear_selection():
+    """TDD: Clicking an already-selected item should NOT clear multi-select (allows drag initiation)."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_a.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_b.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_c.png")}
+                    )(),
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Build multi-select: slides A and B
+        slide_a = controller._slides[0]
+        slide_b = controller._slides[1]
+        slide_a_key = str(slide_a.source)
+        slide_b_key = str(slide_b.source)
+        panel._source_selected_keys.add(slide_a_key)
+        panel._source_selected_keys.add(slide_b_key)
+
+        # Regular click on B (already selected)
+        event = type("Event", (), {"state": 0x0000})()
+        panel._on_source_click(event, s=slide_b)
+
+        # Selection should still contain A and B (NOT cleared)
+        assert slide_a_key in panel._source_selected_keys
+        assert slide_b_key in panel._source_selected_keys
+        # Pending drag source should be set
+        assert panel._pending_drag_source is not None
+        assert panel._pending_drag_source.source == slide_b.source
+
+    finally:
+        root.destroy()
+
+
+def test_clicking_unselected_item_clears_multi_select():
+    """TDD: Clicking an UNselected item should clear multi-select and select only that item."""
+    root = tk.Tk()
+    root.withdraw()
+    try:
+
+        class DummyController:
+            def __init__(self):
+                self.current_sequence = Sequence(name="Demo", items=[])
+                self._slides = [
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_a.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_b.png")}
+                    )(),
+                    type(
+                        "Slide", (), {"source": Path(__file__).with_name("img_c.png")}
+                    )(),
+                ]
+                self.deck = type(
+                    "Deck",
+                    (),
+                    {
+                        "current_index": 0,
+                        "get_current": lambda self: self._slides[self.current_index],
+                    },
+                )()
+                self.deck._slides = self._slides
+
+            def get_source_slides(self):
+                return self._slides
+
+            def jump_to(self, index):
+                self.deck.current_index = index
+
+        controller = DummyController()
+        panel = SequencePanel(root, controller)
+        panel.show()
+        root.update_idletasks()
+
+        # Build multi-select: slides A and B
+        slide_a = controller._slides[0]
+        slide_b = controller._slides[1]
+        slide_c = controller._slides[2]
+        slide_a_key = str(slide_a.source)
+        slide_b_key = str(slide_b.source)
+        slide_c_key = str(slide_c.source)
+        panel._source_selected_keys.add(slide_a_key)
+        panel._source_selected_keys.add(slide_b_key)
+
+        # Regular click on C (NOT selected)
+        event = type("Event", (), {"state": 0x0000})()
+        panel._on_source_click(event, s=slide_c)
+
+        # Selection should be cleared; only anchor set to C's position
+        assert len(panel._source_selected_keys) == 0
+        assert controller.deck.current_index == 2
+        assert panel._source_selection_anchor_key == slide_c_key
+
+    finally:
+        root.destroy()
+
+
