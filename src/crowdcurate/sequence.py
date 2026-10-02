@@ -222,10 +222,11 @@ class SequencePanel:
 
     def shutdown(self) -> None:
         """Clean up resources for fast application shutdown."""
-        # Clear all photo references to allow tkinter cleanup
+        # Clear all photo references to allow faster garbage collection
         self._source_photos.clear()
         self._sequence_photos.clear()
         self._drag_photo = None
+        
         # Clear widget references
         self._source_widgets.clear()
         self._source_widget_ids.clear()

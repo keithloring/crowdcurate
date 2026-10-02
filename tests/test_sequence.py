@@ -901,7 +901,7 @@ def test_shift_click_selects_range():
 
 
 def test_sequence_panel_shutdown_clears_photo_references():
-    """TDD: shutdown() should clear all photo references for fast cleanup."""
+    """TDD: shutdown() clears resources and canvas items for fast app exit."""
     root = tk.Tk()
     root.withdraw()
     try:
